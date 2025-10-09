@@ -20,17 +20,17 @@ export const AboutSection: React.FC = () => {
               Leading Rugby Officiating into the Digital Age
             </h2>
             <p className="text-lg text-gray-700 mb-4">
-              RefCentral represents the evolution of rugby referee management. Built by officials, 
+              RefCentral represents the evolution of rugby referee management in Eastern Province Rugby Referees Society. Built by officials, 
               for officials, our platform combines decades of rugby tradition with cutting-edge technology.
             </p>
             <p className="text-lg text-gray-700 mb-6">
               From appointment scheduling to comprehensive reporting, we've digitized every aspect 
-              of referee administration while maintaining the integrity and authority that defines rugby officiating.
+              of referee administration while maintaining the integrity and authority that defines rugby officiating in Eastern Province Rugby Union.
             </p>
             
             <div className="grid grid-cols-2 gap-4">
               <Card className="text-center">
-                <div className="text-3xl font-bold text-emerald-700 mb-1">15+</div>
+                <div className="text-3xl font-bold text-emerald-700 mb-1">5+</div>
                 <div className="text-sm text-gray-600">Years Experience</div>
               </Card>
               <Card className="text-center">

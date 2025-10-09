@@ -2,9 +2,9 @@ import React from 'react';
 
 export const Stats: React.FC = () => {
   const stats = [
-    { value: '150+', label: 'Active Referees' },
+    { value: '100+', label: 'Active Referees' },
     { value: '500+', label: 'Matches Officiated' },
-    { value: '98%', label: 'Appointment Acceptance' },
+    { value: '95%', label: 'Appointment Acceptance' },
     { value: '24/7', label: 'Platform Access' }
   ];
 
