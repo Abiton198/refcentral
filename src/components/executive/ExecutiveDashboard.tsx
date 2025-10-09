@@ -4,12 +4,13 @@ import { AppointmentForm } from './AppointmentForm';
 import { AppointmentsList } from './AppointmentsList';
 import { RefereeManagement } from './RefereeManagement';
 import { ReportsView } from './ReportsView';
+import { ResultsView } from './ResultsView';
 import { Appointment } from '../../types';
 
 export const ExecutiveDashboard: React.FC = () => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'appointments' | 'referees' | 'reports'>('appointments');
+  const [activeTab, setActiveTab] = useState<'appointments' | 'referees' | 'reports' | 'results'>('appointments');
 
   const handleCreateAppointment = (appointment: Appointment) => {
     setAppointments([...appointments, appointment]);
@@ -20,7 +21,7 @@ export const ExecutiveDashboard: React.FC = () => {
     total: appointments.length,
     pending: appointments.filter(a => a.status === 'pending').length,
     accepted: appointments.filter(a => a.status === 'accepted').length,
-    rejected: appointments.filter(a => a.status === 'rejected').length
+    rejected: appointments.filter(a => a.status === 'rejected').length,
   };
 
   return (
@@ -63,6 +64,12 @@ export const ExecutiveDashboard: React.FC = () => {
         >
           Reports
         </button>
+        <button
+          onClick={() => setActiveTab('results')}
+          className={`px-6 py-3 font-semibold ${activeTab === 'results' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-600'}`}
+        >
+          Results
+        </button>
       </div>
 
       {activeTab === 'appointments' && (
@@ -79,6 +86,7 @@ export const ExecutiveDashboard: React.FC = () => {
 
       {activeTab === 'referees' && <RefereeManagement />}
       {activeTab === 'reports' && <ReportsView />}
+      {activeTab === 'results' && <ResultsView />}  {/* ✅ new tab */}
     </div>
   );
 };

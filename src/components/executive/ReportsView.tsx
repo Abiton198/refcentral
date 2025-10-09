@@ -7,24 +7,24 @@ export const ReportsView: React.FC = () => {
     {
       id: '1',
       type: 'incident',
-      submittedBy: 'John Smith',
-      match: 'Springboks vs Lions',
+      submittedBy: 'Marquin Potberg',
+      match: 'Harlequins vs NMU',
       date: '2025-10-10',
       status: 'reviewed'
     },
     {
       id: '2',
       type: 'redCard',
-      submittedBy: 'Sarah Jones',
-      match: 'Bulls vs Sharks',
+      submittedBy: 'Clinton Hersing',
+      match: 'Trying Stars vs Partensie',
       date: '2025-10-08',
       status: 'pending'
     },
     {
       id: '3',
       type: 'result',
-      submittedBy: 'Mike Brown',
-      match: 'Stormers vs Cheetahs',
+      submittedBy: 'Aphiwe Mfana',
+      match: 'Gardens vs Star of Hope',
       date: '2025-10-05',
       status: 'reviewed'
     }

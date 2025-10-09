@@ -11,18 +11,18 @@ export const RefereeDashboard: React.FC = () => {
       id: '1',
       date: '2025-10-15',
       time: '15:00',
-      homeTeam: 'Springboks',
-      awayTeam: 'Lions',
-      venue: 'Ellis Park',
+      homeTeam: 'Harlequins',
+      awayTeam: 'Progress',
+      venue: 'Adcork Stadium',
       status: 'pending'
     },
     {
       id: '2',
       date: '2025-10-20',
       time: '14:30',
-      homeTeam: 'Bulls',
-      awayTeam: 'Sharks',
-      venue: 'Loftus Versfeld',
+      homeTeam: 'Gardens',
+      awayTeam: 'Brumbies',
+      venue: 'Central',
       status: 'pending'
     }
   ]);
@@ -33,8 +33,10 @@ export const RefereeDashboard: React.FC = () => {
     ));
   };
 
+  // ✅ counts
   const pending = appointments.filter(a => a.status === 'pending').length;
   const accepted = appointments.filter(a => a.status === 'accepted').length;
+  const rejected = appointments.filter(a => a.status === 'rejected').length;
 
   if (showReportForm) {
     return <ReportSubmission onClose={() => setShowReportForm(false)} />;
@@ -47,9 +49,11 @@ export const RefereeDashboard: React.FC = () => {
         <Button onClick={() => setShowReportForm(true)}>📝 Submit Report</Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Pending Appointments" value={pending} icon="⏳" color="amber" />
+      {/* ✅ Stat cards now include Rejected */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard title="Pending" value={pending} icon="⏳" color="amber" />
         <StatCard title="Accepted" value={accepted} icon="✅" color="green" />
+        <StatCard title="Rejected" value={rejected} icon="❌" color="red" />
         <StatCard title="Career Matches" value="47" icon="🏆" color="emerald" />
       </div>
 
@@ -61,8 +65,16 @@ export const RefereeDashboard: React.FC = () => {
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    <h3 className="text-lg font-bold">{apt.homeTeam} vs {apt.awayTeam}</h3>
-                    <Badge variant={apt.status === 'accepted' ? 'success' : apt.status === 'rejected' ? 'danger' : 'warning'}>
+                    <h3 className="text-lg font-bold">
+                      {apt.homeTeam} vs {apt.awayTeam}
+                    </h3>
+                    <Badge 
+                      variant={
+                        apt.status === 'accepted' ? 'success' 
+                        : apt.status === 'rejected' ? 'danger' 
+                        : 'warning'
+                      }
+                    >
                       {apt.status.toUpperCase()}
                     </Badge>
                   </div>
@@ -71,8 +83,12 @@ export const RefereeDashboard: React.FC = () => {
                 </div>
                 {apt.status === 'pending' && (
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => handleResponse(apt.id, 'accepted')}>Accept</Button>
-                    <Button size="sm" variant="danger" onClick={() => handleResponse(apt.id, 'rejected')}>Decline</Button>
+                    <Button size="sm" onClick={() => handleResponse(apt.id, 'accepted')}>
+                      Accept
+                    </Button>
+                    <Button size="sm" variant="danger" onClick={() => handleResponse(apt.id, 'rejected')}>
+                      Decline
+                    </Button>
                   </div>
                 )}
               </div>

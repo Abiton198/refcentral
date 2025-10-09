@@ -101,7 +101,7 @@ export const AppointmentForm: React.FC<AppointmentFormProps> = ({ onSubmit }) =>
         onChange={(e) => setFormData({...formData, firstReserve: e.target.value})}
         className="w-full border rounded-lg px-4 py-2"
       >
-        <option value="">Select 1st Reserve (Optional)</option>
+        <option value="">Select 1st Reserve</option>
         {mockReferees.map(ref => <option key={ref.id} value={ref.name}>{ref.name}</option>)}
       </select>
 
@@ -112,6 +112,8 @@ export const AppointmentForm: React.FC<AppointmentFormProps> = ({ onSubmit }) =>
       >
         <option value="league">League Match</option>
         <option value="cup">Cup Match</option>
+        <option value="school">School Game</option>
+        <option value="tournament">Tournament</option>
         <option value="friendly">Friendly</option>
       </select>
 
