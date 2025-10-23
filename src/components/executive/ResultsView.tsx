@@ -1,246 +1,176 @@
 import React, { useEffect, useState } from "react";
+import { Card } from "../ui/Card";
+import { Badge } from "../ui/Badge";
 import { db } from "../../lib/firebase";
 import {
   collection,
   onSnapshot,
   orderBy,
   query,
-  getDocs,
-  where,
+  doc,
+  getDoc,
 } from "firebase/firestore";
-import { format } from "date-fns";
+import { Button } from "../ui/Button";
 
 interface MatchResult {
   id: string;
   homeTeam: string;
   awayTeam: string;
-  date: string;
-  time?: string;
-  venue?: string;
-  refereeName?: string;
-  leagueType?: string;
-  homeScore?: string;
-  awayScore?: string;
-  notes?: string;
-  createdAt: any;
-}
-
-interface ReportData {
-  id: string;
-  matchDate: string;
-  teams: string;
+  homeScore: string;
+  awayScore: string;
+  referee: string;
   venue: string;
-  details: string;
-  refereeName: string;
-  lawInfringed?: string;
-  playerName?: string;
-  cardType?: string;
-  minute?: string;
-  type?: string;
+  submittedAt: string;
+  notes?: string;
+  appointmentId?: string;
 }
 
 export const ResultsView: React.FC = () => {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [filteredResults, setFilteredResults] = useState<MatchResult[]>([]);
-  const [searchTeam, setSearchTeam] = useState("");
-  const [searchReferee, setSearchReferee] = useState("");
-  const [dateFilter, setDateFilter] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectedReport, setSelectedReport] = useState<ReportData | null>(null);
-  const [loadingReport, setLoadingReport] = useState(false);
+  const [selectedResult, setSelectedResult] = useState<MatchResult | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  // ✅ Fetch match results
+  // ✅ Fetch results in real time
   useEffect(() => {
-    const q = query(collection(db, "matchResults"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snapshot) => {
+    const q = query(collection(db, "results"), orderBy("submittedAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((doc) => ({
         id: doc.id,
         homeTeam: doc.data().homeTeam || "",
         awayTeam: doc.data().awayTeam || "",
-        homeScore: doc.data().homeScore || "",
-        awayScore: doc.data().awayScore || "",
-        date: doc.data().matchDate || "",
-        time: doc.data().matchTime || "",
-        venue: doc.data().venue || "",
-        leagueType: doc.data().gameType || "League",
-        refereeName: doc.data().refereeName || "Unknown Referee",
+        homeScore: doc.data().homeScore || "0",
+        awayScore: doc.data().awayScore || "0",
+        referee: doc.data().referee || "Unknown",
+        venue: doc.data().venue || "N/A",
         notes: doc.data().notes || "",
-        createdAt: doc.data().createdAt,
+        submittedAt: doc.data().submittedAt || "",
+        appointmentId: doc.data().appointmentId || "",
       })) as MatchResult[];
       setResults(data);
       setFilteredResults(data);
     });
-    return () => unsub();
+    return () => unsubscribe();
   }, []);
 
-  // ✅ Filtering logic
+  // ✅ Search filtering
   useEffect(() => {
-    let filtered = results;
-
-    if (searchTeam.trim()) {
-      filtered = filtered.filter(
+    if (!searchTerm.trim()) {
+      setFilteredResults(results);
+      return;
+    }
+    const lower = searchTerm.toLowerCase();
+    setFilteredResults(
+      results.filter(
         (r) =>
-          r.homeTeam.toLowerCase().includes(searchTeam.toLowerCase()) ||
-          r.awayTeam.toLowerCase().includes(searchTeam.toLowerCase())
-      );
-    }
+          r.homeTeam.toLowerCase().includes(lower) ||
+          r.awayTeam.toLowerCase().includes(lower) ||
+          r.referee.toLowerCase().includes(lower)
+      )
+    );
+  }, [searchTerm, results]);
 
-    if (searchReferee.trim()) {
-      filtered = filtered.filter((r) =>
-        r.refereeName?.toLowerCase().includes(searchReferee.toLowerCase())
-      );
-    }
-
-    if (dateFilter.trim()) {
-      filtered = filtered.filter((r) => r.date === dateFilter);
-    }
-
-    setFilteredResults(filtered);
-  }, [searchTeam, searchReferee, dateFilter, results]);
-
-  // ✅ Toggle expanded view
-  const toggleExpand = (id: string) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-    setSelectedReport(null);
-  };
-
-  // ✅ Load related referee report
-  const loadReport = async (match: MatchResult) => {
-    setLoadingReport(true);
-    setSelectedReport(null);
+  // ✅ Load extra details if needed
+  const openDetails = async (result: MatchResult) => {
     try {
-      const q = query(
-        collection(db, "reports"),
-        where("matchDate", "==", match.date),
-        where("teams", "==", `${match.homeTeam} vs ${match.awayTeam}`)
-      );
-      const snap = await getDocs(q);
-
-      if (!snap.empty) {
-        const reportDoc = snap.docs[0];
-        setSelectedReport({
-          id: reportDoc.id,
-          ...(reportDoc.data() as ReportData),
-        });
+      const ref = doc(db, "results", result.id);
+      const snapshot = await getDoc(ref);
+      if (snapshot.exists()) {
+        setSelectedResult({ id: result.id, ...snapshot.data() } as MatchResult);
       } else {
-        setSelectedReport(null);
+        setSelectedResult(result);
       }
     } catch (err) {
-      console.error("Error loading report:", err);
-    } finally {
-      setLoadingReport(false);
+      console.error("Error loading result details:", err);
+      setSelectedResult(result);
     }
   };
 
   return (
-    <div className="bg-white shadow-xl rounded-xl p-6">
-      <h3 className="text-2xl font-bold text-gray-900 mb-4">🏆 Match Results</h3>
+    <div className="space-y-4">
+      <h3 className="text-2xl font-bold text-gray-900">🏆 Match Results</h3>
 
-      {/* 🔍 Filters */}
-      <div className="flex flex-col md:flex-row gap-3 mb-6">
+      {/* 🔍 Search bar */}
+      <div className="flex flex-col md:flex-row gap-3 mb-4">
         <input
           type="text"
-          placeholder="Search by Team..."
-          value={searchTeam}
-          onChange={(e) => setSearchTeam(e.target.value)}
-          className="w-full md:w-1/3 border rounded-lg px-4 py-2"
-        />
-        <input
-          type="text"
-          placeholder="Search by Referee..."
-          value={searchReferee}
-          onChange={(e) => setSearchReferee(e.target.value)}
-          className="w-full md:w-1/3 border rounded-lg px-4 py-2"
-        />
-        <input
-          type="date"
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
+          placeholder="Search by team or referee..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
           className="w-full md:w-1/3 border rounded-lg px-4 py-2"
         />
       </div>
 
-      {/* 🧾 Results List */}
+      {/* 📋 Results list */}
       {filteredResults.length === 0 ? (
-        <p className="text-gray-600 text-center py-8">No results found.</p>
+        <Card>
+          <p className="text-center text-gray-500 py-6">No results found.</p>
+        </Card>
       ) : (
         <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredResults.map((match) => {
-            const formattedDate = match.date
-              ? format(new Date(match.date), "yyyy-MM-dd")
-              : "N/A";
-
-            return (
-              <div
-                key={match.id}
-                className="border rounded-xl shadow-md hover:shadow-lg transition-all bg-gray-50 cursor-pointer"
-                onClick={() => toggleExpand(match.id)}
-              >
-                {/* Compact card view */}
-                <div className="p-4 border-b flex flex-col items-center">
-                  <p className="font-semibold text-gray-900 text-lg">
-                    {match.homeTeam} <span className="text-emerald-600">vs</span> {match.awayTeam}
-                  </p>
-                  <p className="text-xl font-bold mt-1">
-                    {match.homeScore || 0} - {match.awayScore || 0}
-                  </p>
-                  <p className="text-sm text-gray-500 mt-1">{formattedDate}</p>
-                </div>
-
-                {/* Expanded card details */}
-                {expandedId === match.id && (
-                  <div className="p-4 text-sm text-gray-700 space-y-2">
-                    <p><strong>🏟️ Venue:</strong> {match.venue || "—"}</p>
-                    <p><strong>🕒 Time:</strong> {match.time || "—"}</p>
-                    <p><strong>🎯 Type:</strong> {match.leagueType}</p>
-                    <p><strong>👨‍⚖️ Referee:</strong> {match.refereeName}</p>
-                    {match.notes && <p><strong>🗒️ Notes:</strong> {match.notes}</p>}
-
-                    {/* 🧾 View Full Report */}
-                    <div className="pt-3">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          loadReport(match);
-                        }}
-                        className="text-emerald-700 font-semibold hover:underline"
-                      >
-                        {loadingReport ? "Loading..." : "📄 View Full Report"}
-                      </button>
-
-                      {/* Display report data inline */}
-                      {selectedReport && selectedReport.matchDate === match.date && (
-                        <div className="mt-3 border-t pt-2 text-gray-800 space-y-1">
-                          <p><strong>Teams:</strong> {selectedReport.teams}</p>
-                          <p><strong>Venue:</strong> {selectedReport.venue}</p>
-                          <p><strong>Details:</strong> {selectedReport.details}</p>
-                          {selectedReport.lawInfringed && (
-                            <p><strong>Law:</strong> {selectedReport.lawInfringed}</p>
-                          )}
-                          {selectedReport.playerName && (
-                            <p><strong>Player:</strong> {selectedReport.playerName}</p>
-                          )}
-                          {selectedReport.cardType && (
-                            <p><strong>Card:</strong> {selectedReport.cardType}</p>
-                          )}
-                          {selectedReport.minute && (
-                            <p><strong>Minute:</strong> {selectedReport.minute}'</p>
-                          )}
-                        </div>
-                      )}
-
-                      {/* No report case */}
-                      {!loadingReport && selectedReport === null && (
-                        <p className="text-gray-500 mt-2 italic">
-                          No report submitted for this match.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
+          {filteredResults.map((res) => (
+            <Card
+              key={res.id}
+              onClick={() => openDetails(res)}
+              className="hover:border-emerald-500 border-2 border-transparent cursor-pointer transition-all bg-gray-50"
+            >
+              <div className="p-4">
+                <h4 className="font-bold text-gray-900 text-lg mb-2">
+                  {res.homeTeam} <span className="text-emerald-600">vs</span> {res.awayTeam}
+                </h4>
+                <p className="text-xl font-semibold">
+                  {res.homeScore} - {res.awayScore}
+                </p>
+                <p className="text-sm text-gray-600 mt-2">
+                  🏟️ {res.venue}
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  👨‍⚖️ {res.referee}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {new Date(res.submittedAt).toLocaleString()}
+                </p>
               </div>
-            );
-          })}
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* 🪟 Modal for result details */}
+      {selectedResult && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 relative overflow-y-auto max-h-[90vh]">
+            <h3 className="text-xl font-bold mb-4 text-gray-900">
+              Match Result Details
+            </h3>
+
+            <p className="text-gray-700">
+              <strong>Match:</strong> {selectedResult.homeTeam} vs {selectedResult.awayTeam}
+            </p>
+            <p className="text-gray-700">
+              <strong>Score:</strong> {selectedResult.homeScore} - {selectedResult.awayScore}
+            </p>
+            <p className="text-gray-700">
+              <strong>Venue:</strong> {selectedResult.venue}
+            </p>
+            <p className="text-gray-700">
+              <strong>Referee:</strong> {selectedResult.referee}
+            </p>
+            {selectedResult.notes && (
+              <p className="text-gray-700 mt-2">
+                <strong>Notes:</strong> {selectedResult.notes}
+              </p>
+            )}
+            <p className="text-sm text-gray-500 mt-4">
+              Submitted on {new Date(selectedResult.submittedAt).toLocaleString()}
+            </p>
+
+            <div className="flex justify-end mt-6">
+              <Button variant="outline" onClick={() => setSelectedResult(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

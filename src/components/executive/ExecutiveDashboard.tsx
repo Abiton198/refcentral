@@ -7,6 +7,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { getAuth, signOut } from "firebase/auth";
 import { AppointmentForm } from "./AppointmentForm";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -14,7 +15,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/use-toast";
 import { mockVenues } from "@/data/mockData";
-import { ResultsView } from "./ResultsView";
+import  {ResultsView}  from "./ResultsView";
+
 interface Appointment {
   id: string;
   date: string;
@@ -68,12 +70,6 @@ export const ExecutiveDashboard: React.FC = () => {
   const [reportFilter, setReportFilter] = useState<"all" | "pending" | "reviewed">("all");
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
-  const [filter, setFilter] = useState({
-    status: "all",
-    referee: "",
-    startDate: "",
-    endDate: "",
-  });
 
   // 🔥 Real-time Firestore listeners
   useEffect(() => {
@@ -105,6 +101,26 @@ export const ExecutiveDashboard: React.FC = () => {
       unsubReports();
     };
   }, []);
+
+  // ✅ Logout handler
+  const handleLogout = async () => {
+    const auth = getAuth();
+    try {
+      await signOut(auth);
+      toast({
+        title: "Signed Out",
+        description: "You have been logged out successfully.",
+      });
+      window.location.href = "/"; // Redirect to landing/login page
+    } catch (err) {
+      console.error("Logout error:", err);
+      toast({
+        title: "Error",
+        description: "Failed to log out. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   // ✅ Handle appointment status
   const handleStatusChange = async (id: string, newStatus: string) => {
@@ -149,7 +165,10 @@ export const ExecutiveDashboard: React.FC = () => {
 
   const handleSaveEdit = async (id: string) => {
     try {
-      await updateDoc(doc(db, "appointments", id), { ...editForm, updatedAt: new Date().toISOString() });
+      await updateDoc(doc(db, "appointments", id), {
+        ...editForm,
+        updatedAt: new Date().toISOString(),
+      });
       setActiveEditId(null);
       toast({ title: "Updated", description: "Appointment successfully updated." });
     } catch (err) {
@@ -187,19 +206,36 @@ export const ExecutiveDashboard: React.FC = () => {
     }
   };
 
+  // 🧭 Dashboard Layout
   return (
     <div className="space-y-8">
-   
-      <p className="text-gray-600">Oversee all appointments, match results, and referee reports</p>
+      {/* Header with Logout */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-900">Executive Dashboard</h2>
+          <p className="text-gray-600">
+            Oversee all appointments, match results, and referee reports
+          </p>
+        </div>
 
+        <Button
+          variant="outline"
+          onClick={handleLogout}
+          className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white transition"
+        >
+          🚪 Logout
+        </Button>
+      </div>
+
+      {/* Tabs for Appointments / Results / Reports */}
       <Tabs defaultValue="appointments" className="w-full">
         <TabsList className="flex space-x-4 border-b mb-4">
           <TabsTrigger value="appointments">🗓️ Appointments</TabsTrigger>
-          <TabsTrigger value="results">🏉  Results</TabsTrigger>
+          <TabsTrigger value="results">🏉 Results</TabsTrigger>
           <TabsTrigger value="reports">🧾 Reports</TabsTrigger>
         </TabsList>
 
-        {/* 🗓️ Appointments */}
+        {/* 🗓️ Appointments Tab */}
         <TabsContent value="appointments">
           <AppointmentForm />
 
@@ -236,7 +272,9 @@ export const ExecutiveDashboard: React.FC = () => {
                         )}
                       </div>
 
-                      <p className="text-gray-600">📅 {apt.date} • ⏰ {apt.time}</p>
+                      <p className="text-gray-600">
+                        📅 {apt.date} • ⏰ {apt.time}
+                      </p>
                       <p className="text-gray-600">📍 {apt.venue}</p>
                       <p className="text-gray-600">🎯 {apt.gameType || "General Match"}</p>
                       <p className="text-gray-600">👨‍⚖️ {apt.mainReferee}</p>
@@ -307,7 +345,12 @@ export const ExecutiveDashboard: React.FC = () => {
                         <Button size="sm" onClick={() => handleSaveEdit(apt.id)} className="flex-1">
                           💾 Save
                         </Button>
-                        <Button size="sm" variant="danger" onClick={() => setActiveEditId(null)} className="flex-1">
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => setActiveEditId(null)}
+                          className="flex-1"
+                        >
                           Cancel
                         </Button>
                       </div>
@@ -319,34 +362,12 @@ export const ExecutiveDashboard: React.FC = () => {
           )}
         </TabsContent>
 
-        {/* ⚽ Results
+        {/* 🏉 Results Tab */}
         <TabsContent value="results">
-          <h3 className="text-2xl font-bold mb-4 text-gray-900">Submitted Match Results</h3>
-          {loadingResults ? (
-            <p className="text-center text-gray-500 py-8">Loading...</p>
-          ) : results.length === 0 ? (
-            <p className="text-center text-gray-500 py-8">No results submitted yet.</p>
-          ) : (
-            <div className="space-y-4">
-              {results.map((r) => (
-                <Card key={r.id} className="p-4">
-                  <p className="font-semibold text-gray-900">
-                    {r.referee} — {new Date(r.submittedAt).toLocaleString()}
-                  </p>
-                  <p className="text-gray-700">🏆 {r.homeScore} - {r.awayScore}</p>
-                  {r.notes && <p className="text-gray-600 italic mt-1">“{r.notes}”</p>}
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent> */}
+          <ResultsView />
+        </TabsContent>
 
-        <TabsContent value="results">
-  <ResultsView />
-</TabsContent>
-
-
-        {/* 🧾 Reports */}
+        {/* 🧾 Reports Tab */}
         <TabsContent value="reports">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-2xl font-bold text-gray-900">Referee Reports</h3>
@@ -385,7 +406,9 @@ export const ExecutiveDashboard: React.FC = () => {
                           </span>
                         )}
                       </p>
-                      {rep.refereeEmail && <p className="text-sm text-gray-600">📧 {rep.refereeEmail}</p>}
+                      {rep.refereeEmail && (
+                        <p className="text-sm text-gray-600">📧 {rep.refereeEmail}</p>
+                      )}
                       {rep.lawBroken && (
                         <p className="text-sm text-emerald-700 font-medium mt-2">
                           ⚖️ {rep.lawBroken}

@@ -15,7 +15,7 @@ import {
   getDoc,
   orderBy,
 } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { getAuth, signOut } from "firebase/auth";
 import { toast } from "@/components/ui/use-toast";
 
 interface Appointment {
@@ -71,6 +71,25 @@ export const RefereeDashboard: React.FC = () => {
   const currentRefereeName = user?.displayName || "";
   const currentRefereeEmail = user?.email || "";
   const currentRefereeId = user?.uid || "";
+
+  // ✅ Logout handler
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast({
+        title: "Signed Out",
+        description: "You have been logged out successfully.",
+      });
+      window.location.href = "/"; // redirect to login or home
+    } catch (err) {
+      console.error("Logout error:", err);
+      toast({
+        title: "Error",
+        description: "Failed to log out. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   // ✅ Fetch referee profile
   useEffect(() => {
@@ -180,56 +199,55 @@ export const RefereeDashboard: React.FC = () => {
   };
 
   // ✅ Submit Match Result
-const handleSubmitResult = async (id: string) => {
-  const result = matchResults[id];
-  if (!result?.homeScore || !result?.awayScore) {
-    toast({
-      title: "Incomplete",
-      description: "Please enter both scores before submitting.",
-      variant: "destructive",
-    });
-    return;
-  }
+  const handleSubmitResult = async (id: string) => {
+    const result = matchResults[id];
+    if (!result?.homeScore || !result?.awayScore) {
+      toast({
+        title: "Incomplete",
+        description: "Please enter both scores before submitting.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-  const match = appointments.find((a) => a.id === id);
-  if (!match) {
-    toast({
-      title: "Error",
-      description: "Match not found in appointments.",
-      variant: "destructive",
-    });
-    return;
-  }
+    const match = appointments.find((a) => a.id === id);
+    if (!match) {
+      toast({
+        title: "Error",
+        description: "Match not found in appointments.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-  try {
-    await addDoc(collection(db, "results"), {
-      appointmentId: id,
-      homeTeam: match.homeTeam,
-      awayTeam: match.awayTeam,
-      venue: match.venue,
-      homeScore: result.homeScore,
-      awayScore: result.awayScore,
-      notes: result.notes || "",
-      refereeId: currentRefereeId,
-      referee: currentRefereeName,
-      submittedAt: new Date().toISOString(),
-    });
+    try {
+      await addDoc(collection(db, "results"), {
+        appointmentId: id,
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        venue: match.venue,
+        homeScore: result.homeScore,
+        awayScore: result.awayScore,
+        notes: result.notes || "",
+        refereeId: currentRefereeId,
+        referee: currentRefereeName,
+        submittedAt: new Date().toISOString(),
+      });
 
-    setActiveResult(null);
-    toast({
-      title: "Success ✅",
-      description: "Match result submitted successfully.",
-    });
-  } catch (err) {
-    console.error("Error submitting result:", err);
-    toast({
-      title: "Error",
-      description: "Failed to submit match result.",
-      variant: "destructive",
-    });
-  }
-};
-
+      setActiveResult(null);
+      toast({
+        title: "Success ✅",
+        description: "Match result submitted successfully.",
+      });
+    } catch (err) {
+      console.error("Error submitting result:", err);
+      toast({
+        title: "Error",
+        description: "Failed to submit match result.",
+        variant: "destructive",
+      });
+    }
+  };
 
   // ✅ Stats
   const pending = appointments.filter((a) => a.status === "pending").length;
@@ -238,7 +256,23 @@ const handleSubmitResult = async (id: string) => {
 
   return (
     <div className="space-y-10">
-     
+      {/* Header with Logout */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-900">
+            Referee Dashboard
+          </h2>
+          <p className="text-gray-600">Manage your matches, results, and reports</p>
+        </div>
+
+        <Button
+          variant="outline"
+          onClick={handleLogout}
+          className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white transition"
+        >
+          🚪 Logout
+        </Button>
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -256,7 +290,6 @@ const handleSubmitResult = async (id: string) => {
       {/* Appointments */}
       <div>
         <h3 className="text-2xl font-bold mb-4 text-gray-900">Your Appointments</h3>
-
         {loading ? (
           <p className="text-center text-gray-500 py-8">Loading appointments...</p>
         ) : appointments.length === 0 ? (
@@ -353,7 +386,6 @@ const handleSubmitResult = async (id: string) => {
                           </Button>
                         )}
 
-                        {/* Add report button */}
                         <Button
                           size="sm"
                           className="w-full"
@@ -365,7 +397,6 @@ const handleSubmitResult = async (id: string) => {
                     )}
                   </div>
 
-                  {/* Accept / Reject */}
                   {apt.status === "pending" && (
                     <div className="flex gap-2">
                       <Button
@@ -390,7 +421,7 @@ const handleSubmitResult = async (id: string) => {
         )}
       </div>
 
-      {/* 🧾 My Reports */}
+      {/* Reports Section */}
       <div>
         <h3 className="text-2xl font-bold mb-4 text-gray-900">My Reports</h3>
         {reports.length === 0 ? (
@@ -424,7 +455,7 @@ const handleSubmitResult = async (id: string) => {
         )}
       </div>
 
-      {/* 📝 Report Modal */}
+      {/* Report Modal */}
       {activeReportId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6 overflow-y-auto max-h-[90vh]">
