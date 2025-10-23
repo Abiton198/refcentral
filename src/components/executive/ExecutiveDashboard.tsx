@@ -15,7 +15,9 @@ import { Badge } from "@/components/ui/Badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/use-toast";
 import { mockVenues } from "@/data/mockData";
-import  {ResultsView}  from "./ResultsView";
+import { ResultsView } from "./ResultsView";
+import { CoachManagement } from "./CoachManagement";
+import { RefereeManagement } from "./RefereeManagement";
 
 interface Appointment {
   id: string;
@@ -25,11 +27,9 @@ interface Appointment {
   awayTeam: string;
   venue: string;
   gameType?: string;
-  secondTeamGame?: string;
   isSchoolGame?: boolean;
   mainReferee: string;
   refereeEmail?: string;
-  firstReserve?: string;
   status: "pending" | "accepted" | "rejected";
 }
 
@@ -52,24 +52,19 @@ interface Report {
   date: string;
   timeOfIncident?: string;
   reviewed?: boolean;
-  matchDetails?: {
-    homeTeam: string;
-    awayTeam: string;
-    venue: string;
-    time: string;
-  };
 }
 
 export const ExecutiveDashboard: React.FC = () => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [results, setResults] = useState<MatchResult[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
-  const [loadingResults, setLoadingResults] = useState(true);
   const [loadingReports, setLoadingReports] = useState(true);
   const [reportFilter, setReportFilter] = useState<"all" | "pending" | "reviewed">("all");
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
+  const [activeTab, setActiveTab] = useState<
+    "appointments" | "results" | "reports" | "coaches" | "referees"
+  >("appointments");
 
   // 🔥 Real-time Firestore listeners
   useEffect(() => {
@@ -77,14 +72,6 @@ export const ExecutiveDashboard: React.FC = () => {
       const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Appointment) }));
       setAppointments(data);
       setLoadingAppointments(false);
-    });
-
-    const unsubResults = onSnapshot(collection(db, "results"), (snap) => {
-      const data = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as MatchResult) }))
-        .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-      setResults(data);
-      setLoadingResults(false);
     });
 
     const unsubReports = onSnapshot(collection(db, "reports"), (snap) => {
@@ -97,32 +84,24 @@ export const ExecutiveDashboard: React.FC = () => {
 
     return () => {
       unsubAppointments();
-      unsubResults();
       unsubReports();
     };
   }, []);
 
-  // ✅ Logout handler
+  // ✅ Logout
   const handleLogout = async () => {
     const auth = getAuth();
     try {
       await signOut(auth);
-      toast({
-        title: "Signed Out",
-        description: "You have been logged out successfully.",
-      });
-      window.location.href = "/"; // Redirect to landing/login page
+      toast({ title: "Signed Out", description: "You have been logged out successfully." });
+      window.location.href = "/";
     } catch (err) {
       console.error("Logout error:", err);
-      toast({
-        title: "Error",
-        description: "Failed to log out. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to log out.", variant: "destructive" });
     }
   };
 
-  // ✅ Handle appointment status
+  // ✅ Appointment handlers
   const handleStatusChange = async (id: string, newStatus: string) => {
     try {
       await updateDoc(doc(db, "appointments", id), { status: newStatus });
@@ -133,7 +112,6 @@ export const ExecutiveDashboard: React.FC = () => {
     }
   };
 
-  // 🗑️ Delete appointment
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this appointment?")) return;
     try {
@@ -145,7 +123,6 @@ export const ExecutiveDashboard: React.FC = () => {
     }
   };
 
-  // ✏️ Edit appointment inline
   const handleEditToggle = (apt: Appointment) => {
     if (activeEditId === apt.id) {
       setActiveEditId(null);
@@ -206,15 +183,14 @@ export const ExecutiveDashboard: React.FC = () => {
     }
   };
 
-  // 🧭 Dashboard Layout
   return (
     <div className="space-y-8">
-      {/* Header with Logout */}
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Executive Dashboard</h2>
           <p className="text-gray-600">
-            Oversee all appointments, match results, and referee reports
+            Oversee appointments, results, reports, coaches & referees
           </p>
         </div>
 
@@ -227,15 +203,17 @@ export const ExecutiveDashboard: React.FC = () => {
         </Button>
       </div>
 
-      {/* Tabs for Appointments / Results / Reports */}
-      <Tabs defaultValue="appointments" className="w-full">
-        <TabsList className="flex space-x-4 border-b mb-4">
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
+        <TabsList className="flex flex-wrap gap-2 border-b mb-4">
           <TabsTrigger value="appointments">🗓️ Appointments</TabsTrigger>
           <TabsTrigger value="results">🏉 Results</TabsTrigger>
           <TabsTrigger value="reports">🧾 Reports</TabsTrigger>
+          <TabsTrigger value="coaches">👨‍🏫 Coaches</TabsTrigger>
+          <TabsTrigger value="referees">⚖️ Referees</TabsTrigger>
         </TabsList>
 
-        {/* 🗓️ Appointments Tab */}
+        {/* 🗓️ Appointments */}
         <TabsContent value="appointments">
           <AppointmentForm />
 
@@ -299,7 +277,6 @@ export const ExecutiveDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Inline Edit Form */}
                   {activeEditId === apt.id && (
                     <div className="mt-4 border-t pt-3 bg-gray-50 p-4 rounded-lg">
                       <div className="grid grid-cols-2 gap-3 mb-3">
@@ -362,12 +339,12 @@ export const ExecutiveDashboard: React.FC = () => {
           )}
         </TabsContent>
 
-        {/* 🏉 Results Tab */}
+        {/* 🏉 Results */}
         <TabsContent value="results">
           <ResultsView />
         </TabsContent>
 
-        {/* 🧾 Reports Tab */}
+        {/* 🧾 Reports */}
         <TabsContent value="reports">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-2xl font-bold text-gray-900">Referee Reports</h3>
@@ -401,9 +378,7 @@ export const ExecutiveDashboard: React.FC = () => {
                       <p className="font-semibold text-gray-900">
                         {rep.referee} — {rep.date}
                         {rep.timeOfIncident && (
-                          <span className="text-gray-600 text-sm ml-2">
-                            🕓 {rep.timeOfIncident}
-                          </span>
+                          <span className="text-gray-600 text-sm ml-2">🕓 {rep.timeOfIncident}</span>
                         )}
                       </p>
                       {rep.refereeEmail && (
@@ -428,6 +403,16 @@ export const ExecutiveDashboard: React.FC = () => {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* 👨‍🏫 Coaches */}
+        <TabsContent value="coaches">
+          <CoachManagement />
+        </TabsContent>
+
+        {/* ⚖️ Referees */}
+        <TabsContent value="referees">
+          <RefereeManagement />
         </TabsContent>
       </Tabs>
     </div>
