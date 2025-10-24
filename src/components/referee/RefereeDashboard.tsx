@@ -17,135 +17,86 @@ import {
 } from "firebase/firestore";
 import { getAuth, signOut } from "firebase/auth";
 import { toast } from "@/components/ui/use-toast";
-
-interface Appointment {
-  id: string;
-  date: string;
-  time: string;
-  homeTeam: string;
-  awayTeam: string;
-  secondTeamGame?: string;
-  venue: string;
-  status: "pending" | "accepted" | "rejected";
-  mainReferee: string;
-  firstReserve?: string;
-  gameType?: string;
-  isSchoolGame?: boolean;
-  refereeId?: string;
-  refereeEmail?: string;
-}
-
-interface Report {
-  id: string;
-  matchDate: string;
-  teams: string;
-  venue: string;
-  type: string;
-  details: string;
-  createdAt?: any;
-  updatedAt?: any;
-}
-
-interface RefereeProfile {
-  id: string;
-  name: string;
-  surname: string;
-  gender: string;
-  contact: string;
-  area: string;
-  yearJoined: string;
-  status: string;
-}
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 export const RefereeDashboard: React.FC = () => {
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [profile, setProfile] = useState<RefereeProfile | null>(null);
-  const [reports, setReports] = useState<Report[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [profile, setProfile] = useState<any | null>(null);
+  const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeResult, setActiveResult] = useState<string | null>(null);
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [matchResults, setMatchResults] = useState<Record<string, any>>({});
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   const auth = getAuth();
   const user = auth.currentUser;
-  const currentRefereeName = user?.displayName || "";
   const currentRefereeEmail = user?.email || "";
   const currentRefereeId = user?.uid || "";
+  const profilePhoto = user?.photoURL || "/default-avatar.png";
 
-  // ✅ Logout handler
+  // 🔹 Logout
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      toast({
-        title: "Signed Out",
-        description: "You have been logged out successfully.",
-      });
-      window.location.href = "/"; // redirect to login or home
+      toast({ title: "Signed Out", description: "Logged out successfully." });
+      window.location.href = "/";
     } catch (err) {
-      console.error("Logout error:", err);
+      console.error(err);
       toast({
         title: "Error",
-        description: "Failed to log out. Please try again.",
+        description: "Failed to log out.",
         variant: "destructive",
       });
     }
   };
 
-  // ✅ Fetch referee profile
+  // 🔹 Fetch Referee Profile
   useEffect(() => {
     const fetchProfile = async () => {
       if (!currentRefereeEmail) return;
-      const refDoc = doc(db, "referees", currentRefereeEmail);
-      const snapshot = await getDoc(refDoc);
-      if (snapshot.exists()) {
-        setProfile({ id: snapshot.id, ...(snapshot.data() as RefereeProfile) });
+      try {
+        const refDoc = doc(db, "referees", currentRefereeEmail);
+        const snap = await getDoc(refDoc);
+        if (snap.exists()) setProfile({ id: snap.id, ...snap.data() });
+      } catch (e) {
+        console.error("Error fetching profile:", e);
       }
     };
     fetchProfile();
   }, [currentRefereeEmail]);
 
-  // ✅ Listen for referee appointments
+  const handleSaveProfile = async () => {
+    if (!profile) return;
+    try {
+      const refDoc = doc(db, "referees", profile.id);
+      await updateDoc(refDoc, { ...profile, updatedAt: new Date() });
+      toast({ title: "Profile Saved ✅", description: "Changes saved." });
+      setEditingProfile(false);
+    } catch (e) {
+      console.error("Save error:", e);
+      toast({ title: "Error", description: "Failed to update.", variant: "destructive" });
+    }
+  };
+
+  // 🔹 Fetch appointments
   useEffect(() => {
-    if (!currentRefereeId && !currentRefereeEmail) return;
-
-    const refIdQuery = query(
+    if (!currentRefereeEmail && !currentRefereeId) return;
+    const q = query(
       collection(db, "appointments"),
-      where("refereeId", "==", currentRefereeId)
+      where("refereeEmail", "==", currentRefereeEmail)
     );
-
-    const unsubId = onSnapshot(refIdQuery, (snapshot) => {
-      const idMatches = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...(doc.data() as Appointment),
-      }));
-
-      const refEmailQuery = query(
-        collection(db, "appointments"),
-        where("refereeEmail", "==", currentRefereeEmail)
+    const unsub = onSnapshot(q, (snap) => {
+      setAppointments(
+        snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       );
-
-      const unsubEmail = onSnapshot(refEmailQuery, (emailSnap) => {
-        const emailMatches = emailSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as Appointment),
-        }));
-
-        const unique = [
-          ...new Map(
-            [...idMatches, ...emailMatches].map((a) => [a.id, a])
-          ).values(),
-        ];
-        setAppointments(unique);
-        setLoading(false);
-      });
-
-      return () => unsubEmail();
+      setLoading(false);
     });
+    return () => unsub();
+  }, [currentRefereeEmail, currentRefereeId]);
 
-    return () => unsubId();
-  }, [currentRefereeId, currentRefereeEmail]);
-
-  // ✅ Listen for referee reports
+  // 🔹 Fetch Reports
   useEffect(() => {
     if (!currentRefereeId) return;
     const q = query(
@@ -153,24 +104,14 @@ export const RefereeDashboard: React.FC = () => {
       where("refereeId", "==", currentRefereeId),
       orderBy("createdAt", "desc")
     );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...(doc.data() as Report),
-      }));
-      setReports(data);
-    });
-
+    const unsub = onSnapshot(q, (snap) =>
+      setReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
     return () => unsub();
   }, [currentRefereeId]);
 
-  // ✅ Handle Accept / Reject
+  // 🔹 Appointment actions
   const handleResponse = async (id: string, response: "accepted" | "rejected") => {
-    setAppointments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: response } : a))
-    );
-
     try {
       await updateDoc(doc(db, "appointments", id), {
         status: response,
@@ -178,100 +119,105 @@ export const RefereeDashboard: React.FC = () => {
       });
       toast({
         title: "Updated",
-        description: `Appointment ${response === "accepted" ? "accepted ✅" : "rejected ❌"}`,
+        description: `Appointment ${response}`,
       });
-    } catch (err) {
-      console.error("Error updating status:", err);
+    } catch (e) {
       toast({
         title: "Error",
-        description: "Permission denied or failed to update status.",
+        description: "Failed to update appointment.",
         variant: "destructive",
       });
     }
   };
 
-  // ✅ Match result input handlers
-  const handleResultChange = (id: string, field: string, value: string) => {
+  const handleResultChange = (id: string, field: string, value: string) =>
     setMatchResults((prev) => ({
       ...prev,
       [id]: { ...prev[id], [field]: value },
     }));
-  };
 
-  // ✅ Submit Match Result
   const handleSubmitResult = async (id: string) => {
     const result = matchResults[id];
-    if (!result?.homeScore || !result?.awayScore) {
-      toast({
-        title: "Incomplete",
-        description: "Please enter both scores before submitting.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const match = appointments.find((a) => a.id === id);
-    if (!match) {
-      toast({
-        title: "Error",
-        description: "Match not found in appointments.",
-        variant: "destructive",
-      });
-      return;
-    }
+    const match = appointments.find((m) => m.id === id);
+    if (!match) return;
 
     try {
       await addDoc(collection(db, "results"), {
         appointmentId: id,
         homeTeam: match.homeTeam,
         awayTeam: match.awayTeam,
-        venue: match.venue,
         homeScore: result.homeScore,
         awayScore: result.awayScore,
-        notes: result.notes || "",
         refereeId: currentRefereeId,
-        referee: currentRefereeName,
-        submittedAt: new Date().toISOString(),
+        submittedAt: new Date(),
       });
-
+      toast({ title: "Result Saved ✅" });
       setActiveResult(null);
-      toast({
-        title: "Success ✅",
-        description: "Match result submitted successfully.",
-      });
-    } catch (err) {
-      console.error("Error submitting result:", err);
-      toast({
-        title: "Error",
-        description: "Failed to submit match result.",
-        variant: "destructive",
-      });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to save result." });
     }
   };
 
-  // ✅ Stats
+  // 🔹 Stats
   const pending = appointments.filter((a) => a.status === "pending").length;
   const accepted = appointments.filter((a) => a.status === "accepted").length;
   const rejected = appointments.filter((a) => a.status === "rejected").length;
 
   return (
-    <div className="space-y-10">
-      {/* Header with Logout */}
+    <div className="space-y-8">
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold text-gray-900">
-            Referee Dashboard
-          </h2>
-          <p className="text-gray-600">Manage your matches, results, and reports</p>
+          <h2 className="text-3xl font-bold text-gray-900">Referee Dashboard</h2>
+          <p className="text-gray-600">Manage your profile, matches, and reports</p>
         </div>
+        <div className="flex items-center gap-4">
+          {/* Clickable Profile Photo */}
+          <div className="relative">
+            <img
+              src={profilePhoto}
+              alt="Profile"
+              onClick={() => setShowProfile(!showProfile)}
+              className="w-12 h-12 rounded-full border-2 border-emerald-500 cursor-pointer hover:scale-105 transition-transform"
+            />
+            {showProfile && profile && (
+              <div className="absolute right-0 mt-2 w-80 bg-white border rounded-xl shadow-lg z-50 p-4">
+                <h3 className="font-semibold text-gray-800 mb-2">
+                  👤 {profile.firstName} {profile.surname}
+                </h3>
+                <div className="text-sm text-gray-700 space-y-1">
+                  <p><strong>Email:</strong> {profile.email}</p>
+                  <p><strong>Contact:</strong> {profile.mobileNumber}</p>
+                  <p><strong>Area:</strong> {profile.city}</p>
+                  <p><strong>Gender:</strong> {profile.gender}</p>
+                  <p><strong>Date of Birth:</strong> {profile.dob}</p>
+                  <p><strong>Bank:</strong> {profile.bankName}</p>
+                </div>
+                <div className="flex justify-end gap-2 mt-3">
+                  <Button size="sm" onClick={() => setEditingProfile(true)}>
+                    ✏️ Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowProfile(false)}
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
 
-        <Button
-          variant="outline"
-          onClick={handleLogout}
-          className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white transition"
-        >
-          🚪 Logout
-        </Button>
+          {/* Logout */}
+          <Button
+            variant="outline"
+            onClick={handleLogout}
+            className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
+          >
+            🚪 Logout
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -279,12 +225,7 @@ export const RefereeDashboard: React.FC = () => {
         <StatCard title="Pending" value={pending} icon="⏳" color="amber" />
         <StatCard title="Accepted" value={accepted} icon="✅" color="green" />
         <StatCard title="Rejected" value={rejected} icon="❌" color="red" />
-        <StatCard
-          title="Career Matches"
-          value={accepted + rejected}
-          icon="🏆"
-          color="emerald"
-        />
+        <StatCard title="Total Matches" value={accepted + rejected} icon="🏆" color="emerald" />
       </div>
 
       {/* Appointments */}
@@ -320,100 +261,17 @@ export const RefereeDashboard: React.FC = () => {
                       📅 {apt.date} • ⏰ {apt.time}
                     </p>
                     <p className="text-gray-600">📍 {apt.venue}</p>
-
-                    {/* Match result form */}
-                    {apt.status === "accepted" && (
-                      <div className="mt-3 border-t pt-3 space-y-2">
-                        {activeResult === apt.id ? (
-                          <>
-                            <div className="grid grid-cols-2 gap-3">
-                              <input
-                                type="number"
-                                placeholder={`${apt.homeTeam} Score`}
-                                className="border rounded-lg px-3 py-2"
-                                value={matchResults[apt.id]?.homeScore || ""}
-                                onChange={(e) =>
-                                  handleResultChange(
-                                    apt.id,
-                                    "homeScore",
-                                    e.target.value
-                                  )
-                                }
-                              />
-                              <input
-                                type="number"
-                                placeholder={`${apt.awayTeam} Score`}
-                                className="border rounded-lg px-3 py-2"
-                                value={matchResults[apt.id]?.awayScore || ""}
-                                onChange={(e) =>
-                                  handleResultChange(
-                                    apt.id,
-                                    "awayScore",
-                                    e.target.value
-                                  )
-                                }
-                              />
-                            </div>
-
-                            <textarea
-                              placeholder="Notes or comments"
-                              className="border rounded-lg w-full px-3 py-2"
-                              rows={2}
-                              value={matchResults[apt.id]?.notes || ""}
-                              onChange={(e) =>
-                                handleResultChange(
-                                  apt.id,
-                                  "notes",
-                                  e.target.value
-                                )
-                              }
-                            />
-
-                            <Button
-                              className="w-full"
-                              onClick={() => handleSubmitResult(apt.id)}
-                            >
-                              ✅ Submit Result
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setActiveResult(apt.id)}
-                          >
-                            📝 Submit Match Result
-                          </Button>
-                        )}
-
-                        <Button
-                          size="sm"
-                          className="w-full"
-                          onClick={() => setActiveReportId(apt.id)}
-                        >
-                          📋 View / Edit Report
+                    {apt.status === "pending" && (
+                      <div className="flex gap-2 mt-2">
+                        <Button size="sm" onClick={() => handleResponse(apt.id, "accepted")}>
+                          Accept
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => handleResponse(apt.id, "rejected")}>
+                          Decline
                         </Button>
                       </div>
                     )}
                   </div>
-
-                  {apt.status === "pending" && (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => handleResponse(apt.id, "accepted")}
-                      >
-                        Accept
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => handleResponse(apt.id, "rejected")}
-                      >
-                        Decline
-                      </Button>
-                    </div>
-                  )}
                 </div>
               </Card>
             ))}
@@ -421,7 +279,7 @@ export const RefereeDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* Reports Section */}
+      {/* Reports */}
       <div>
         <h3 className="text-2xl font-bold mb-4 text-gray-900">My Reports</h3>
         {reports.length === 0 ? (
@@ -437,34 +295,17 @@ export const RefereeDashboard: React.FC = () => {
                 <p className="font-semibold text-gray-900 text-lg">{r.teams}</p>
                 <p className="text-sm text-gray-700">{r.matchDate}</p>
                 <p className="text-gray-600">📋 {r.type?.toUpperCase()}</p>
-                {r.updatedAt ? (
-                  <p className="text-xs text-gray-500 mt-1">
-                    ✏️ Edited: {new Date(r.updatedAt.toDate()).toLocaleString()}
-                  </p>
-                ) : (
-                  <p className="text-xs text-gray-500 mt-1">
-                    🕓 Submitted:{" "}
-                    {r.createdAt
-                      ? new Date(r.createdAt.toDate()).toLocaleString()
-                      : "—"}
-                  </p>
-                )}
               </Card>
             ))}
           </div>
         )}
       </div>
 
-      {/* Report Modal */}
       {activeReportId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6 overflow-y-auto max-h-[90vh]">
-            <ReportSubmission
-              reportId={activeReportId}
-              onClose={() => setActiveReportId(null)}
-            />
-          </div>
-        </div>
+        <ReportSubmission
+          appointmentId={activeReportId}
+          onClose={() => setActiveReportId(null)}
+        />
       )}
     </div>
   );

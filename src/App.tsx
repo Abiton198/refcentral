@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import { RoleBasedAuth } from "./components/RoleBasedAuth"; // ✅ Add this import
 
 // 🔹 Dashboards
 import { ExecutiveDashboard } from "./components/executive/ExecutiveDashboard";
@@ -98,8 +99,12 @@ const App = () => {
               {/* 🏠 Public landing page */}
               <Route path="/" element={<Index />} />
 
-              {/* 🔐 Authentication */}
+              {/* 🔐 Authentication (old version, optional) */}
               <Route path="/auth" element={<Auth />} />
+
+              {/* 🧾 New Role-based Registration & Login */}
+              <Route path="/register" element={<RoleBasedAuth />} />
+              <Route path="/login" element={<RoleBasedAuth />} />
 
               {/* 🧭 Role-based Dashboards */}
               <Route
