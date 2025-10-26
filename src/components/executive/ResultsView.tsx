@@ -72,22 +72,85 @@ export const ResultsView: React.FC = () => {
   }, []);
 
   // 2️⃣ Listen to `results` collection live
-  useEffect(() => {
-    const resultsQuery = query(
-      collection(db, "results"),
-      orderBy("updatedAt", "desc")
-    );
+useEffect(() => {
+  const resultsQuery = query(
+    collection(db, "results"),
+    orderBy("updatedAt", "desc")
+  );
 
-    const unsubResults = onSnapshot(resultsQuery, (snapshot) => {
-      const incoming = snapshot.docs.map((docSnap) => {
+  const unsubResults = onSnapshot(resultsQuery, (snapshot) => {
+    const incoming = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data() as any;
+
+      const ts: Date =
+        data.updatedAt?.toDate?.() ||
+        data.createdAt?.toDate?.() ||
+        new Date();
+
+      // resolve referee name using map (we'll finalize after merge step)
+      const refEmail = data.refereeEmail || data.referee || "";
+      const refUid = data.refereeId || "";
+      const resolvedRefName =
+        refereeMap[refEmail] ||
+        refereeMap[refUid] ||
+        data.refereeName ||
+        refEmail ||
+        refUid ||
+        "Unknown Referee";
+
+      // ✅ Expanded venue field detection
+      const resolvedVenue =
+        data.venue ||
+        data.venueName ||
+        data.matchVenue ||
+        data.matchDetails?.venue ||
+        data.field ||
+        data.location ||
+        "Unknown Venue";
+
+      return {
+        id: docSnap.id,
+        homeTeam: data.homeTeam || "",
+        awayTeam: data.awayTeam || "",
+        homeScore: String(data.homeScore ?? "0"),
+        awayScore: String(data.awayScore ?? "0"),
+        referee: resolvedRefName,
+        venue: resolvedVenue,
+        notes: data.notes || "",
+        playerOfMatch: data.playerOfMatch || "",
+        resultSummary: data.resultSummary || "",
+        submittedAt: ts,
+        appointmentId: data.appointmentId || data.matchId || "",
+      } as MatchResult;
+    });
+
+    setResults((prev) => {
+      const merged = mergeByAppointment([...prev, ...incoming], refereeMap);
+      return merged;
+    });
+  });
+
+  return () => {
+    unsubResults();
+  };
+}, [refereeMap]); // runs again when refereeMap changes so names stay fresh
+
+// 3️⃣ Listen to `appointments` collection live (for inline referee updates)
+useEffect(() => {
+  const apptQuery = query(collection(db, "appointments"));
+  const unsubAppts = onSnapshot(apptQuery, (snapshot) => {
+    const incomingFromAppts = snapshot.docs
+      .map((docSnap) => {
         const data = docSnap.data() as any;
+
+        if (!data.resultSubmitted) return null;
 
         const ts: Date =
           data.updatedAt?.toDate?.() ||
-          data.createdAt?.toDate?.() ||
+          data.respondedAt?.toDate?.() ||
           new Date();
 
-        // resolve referee name using map (we'll finalize after merge step)
+        // resolve referee name
         const refEmail = data.refereeEmail || data.referee || "";
         const refUid = data.refereeId || "";
         const resolvedRefName =
@@ -98,86 +161,44 @@ export const ResultsView: React.FC = () => {
           refUid ||
           "Unknown Referee";
 
+        // ✅ Expanded venue field detection (same logic as above)
+        const resolvedVenue =
+          data.venue ||
+          data.venueName ||
+          data.matchVenue ||
+          data.matchDetails?.venue ||
+          data.field ||
+          data.location ||
+          "Unknown Venue";
+
         return {
           id: docSnap.id,
           homeTeam: data.homeTeam || "",
           awayTeam: data.awayTeam || "",
-          homeScore: String(data.homeScore ?? "0"),
-          awayScore: String(data.awayScore ?? "0"),
+          homeScore: String(data.homeScore ?? data.home_score ?? "0"),
+          awayScore: String(data.awayScore ?? data.away_score ?? "0"),
           referee: resolvedRefName,
-          venue: data.venue || "N/A",
+          venue: resolvedVenue,
           notes: data.notes || "",
           playerOfMatch: data.playerOfMatch || "",
           resultSummary: data.resultSummary || "",
           submittedAt: ts,
-          appointmentId: data.appointmentId || data.matchId || "",
+          appointmentId: docSnap.id,
         } as MatchResult;
-      });
+      })
+      .filter(Boolean) as MatchResult[];
 
-      setResults((prev) => {
-        const merged = mergeByAppointment([...prev, ...incoming], refereeMap);
-        return merged;
-      });
+    setResults((prev) => {
+      const merged = mergeByAppointment([...prev, ...incomingFromAppts], refereeMap);
+      return merged;
     });
+  });
 
-    return () => {
-      unsubResults();
-    };
-  }, [refereeMap]); // runs again when refereeMap changes so names stay fresh
+  return () => {
+    unsubAppts();
+  };
+}, [refereeMap]);
 
-  // 3️⃣ Listen to `appointments` collection live (for inline referee updates)
-  useEffect(() => {
-    const apptQuery = query(collection(db, "appointments"));
-    const unsubAppts = onSnapshot(apptQuery, (snapshot) => {
-      const incomingFromAppts = snapshot.docs
-        .map((docSnap) => {
-          const data = docSnap.data() as any;
-
-          if (!data.resultSubmitted) return null;
-
-          const ts: Date =
-            data.updatedAt?.toDate?.() ||
-            data.respondedAt?.toDate?.() ||
-            new Date();
-
-          // resolve referee name
-          const refEmail = data.refereeEmail || data.referee || "";
-          const refUid = data.refereeId || "";
-          const resolvedRefName =
-            refereeMap[refEmail] ||
-            refereeMap[refUid] ||
-            data.refereeName ||
-            refEmail ||
-            refUid ||
-            "Unknown Referee";
-
-          return {
-            id: docSnap.id,
-            homeTeam: data.homeTeam || "",
-            awayTeam: data.awayTeam || "",
-            homeScore: String(data.homeScore ?? data.home_score ?? "0"),
-            awayScore: String(data.awayScore ?? data.away_score ?? "0"),
-            referee: resolvedRefName,
-            venue: data.venue || "N/A",
-            notes: data.notes || "",
-            playerOfMatch: data.playerOfMatch || "",
-            resultSummary: data.resultSummary || "",
-            submittedAt: ts,
-            appointmentId: docSnap.id,
-          } as MatchResult;
-        })
-        .filter(Boolean) as MatchResult[];
-
-      setResults((prev) => {
-        const merged = mergeByAppointment([...prev, ...incomingFromAppts], refereeMap);
-        return merged;
-      });
-    });
-
-    return () => {
-      unsubAppts();
-    };
-  }, [refereeMap]);
 
   // 🔁 Helper: dedupe and prefer newest per appointment
   function mergeByAppointment(list: MatchResult[], mapRef: Record<string, string>) {

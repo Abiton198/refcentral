@@ -8,7 +8,6 @@ import {
   updateDoc,
   doc,
 } from "firebase/firestore";
-import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 
@@ -19,7 +18,14 @@ interface Report {
   type: string;
   lawBroken?: string;
   description: string;
-  date: string;
+  timeOfIncident?: string;
+  matchDetails?: {
+    homeTeam?: string;
+    awayTeam?: string;
+    venue?: string;
+    date?: string;
+    time?: string;
+  };
   createdAt?: any;
   reviewed?: boolean;
 }
@@ -27,21 +33,43 @@ interface Report {
 export const ReportsTab: React.FC = () => {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedReport, setSelectedReport] = useState<Report | null>(null);
 
-  // ✅ Filters
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "reviewed">("all");
   const [filterRef, setFilterRef] = useState("");
-  const [filterDate, setFilterDate] = useState("");
   const [filterType, setFilterType] = useState("");
 
-  // ✅ Real-time listener for reports
+  // 🔁 Real-time listener — normalize Firestore structure
   useEffect(() => {
     const q = query(collection(db, "reports"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Report[];
+      const data = snapshot.docs.map((docSnap) => {
+        const d = docSnap.data();
+
+        // Normalize “teams” field (e.g., “Parks vs Brumbies”)
+        const [homeTeam, awayTeam] = d.teams?.includes(" vs ")
+          ? d.teams.split(" vs ")
+          : ["Home", "Away"];
+
+        return {
+          id: docSnap.id,
+          referee: d.referee || d.refereeName || "Unknown Referee",
+          refereeEmail: d.refereeEmail || "",
+          type: d.type || "general",
+          lawBroken: d.lawBroken || d.lawInfringed || d.cardType || "",
+          description: d.description || d.details || "",
+          timeOfIncident: d.timeOfIncident || d.minute || "",
+          matchDetails: {
+            homeTeam,
+            awayTeam,
+            venue: d.venue || "Unknown Venue",
+            date: d.matchDate || "",
+            time: d.matchTime || "",
+          },
+          createdAt: d.createdAt,
+          reviewed: d.reviewed || false,
+        } as Report;
+      });
       setReports(data);
       setLoading(false);
     });
@@ -52,13 +80,14 @@ export const ReportsTab: React.FC = () => {
   const handleMarkReviewed = async (id: string) => {
     try {
       await updateDoc(doc(db, "reports", id), { reviewed: true });
+      setSelectedReport((prev) => (prev ? { ...prev, reviewed: true } : prev));
     } catch (err) {
       console.error("Error updating report:", err);
       alert("❌ Failed to update report.");
     }
   };
 
-  // ✅ Optimized derived filtered list
+  // ✅ Filtered list
   const filteredReports = useMemo(() => {
     return reports.filter((r) => {
       const matchStatus =
@@ -67,8 +96,6 @@ export const ReportsTab: React.FC = () => {
           : filterStatus === "pending"
           ? !r.reviewed
           : r.reviewed;
-
-      const matchDate = filterDate ? r.date === filterDate : true;
 
       const matchRef =
         filterRef.trim() === "" ||
@@ -79,17 +106,17 @@ export const ReportsTab: React.FC = () => {
         filterType.trim() === "" ||
         r.type.toLowerCase() === filterType.toLowerCase();
 
-      return matchStatus && matchDate && matchRef && matchType;
+      return matchStatus && matchRef && matchType;
     });
-  }, [reports, filterStatus, filterRef, filterDate, filterType]);
+  }, [reports, filterStatus, filterRef, filterType]);
 
-  // ✅ Badge logic
+  // ✅ Badge display
   const getTypeBadge = (type: string) => {
     switch (type) {
       case "red_card":
         return <Badge variant="danger">🟥 Red Card</Badge>;
       case "incident":
-        return <Badge variant="warning">Incident</Badge>;
+        return <Badge variant="warning"> Incident</Badge>;
       default:
         return <Badge variant="outline">📝 General</Badge>;
     }
@@ -98,7 +125,6 @@ export const ReportsTab: React.FC = () => {
   const resetFilters = () => {
     setFilterStatus("all");
     setFilterRef("");
-    setFilterDate("");
     setFilterType("");
   };
 
@@ -108,10 +134,12 @@ export const ReportsTab: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Referee Reports</h2>
-          <p className="text-gray-500 text-sm">View and manage referee reports below.</p>
+          <p className="text-gray-500 text-sm">
+            Click a card to view full report details.
+          </p>
         </div>
 
-        {/* Status Filter Buttons */}
+        {/* Filter buttons */}
         <div className="flex gap-2">
           <Button
             variant={filterStatus === "all" ? "default" : "outline"}
@@ -134,10 +162,12 @@ export const ReportsTab: React.FC = () => {
         </div>
       </div>
 
-      {/* 🔍 Search & Filters */}
+      {/* Search & Filter */}
       <div className="flex flex-col md:flex-row flex-wrap gap-4 items-end">
         <div className="flex flex-col space-y-1 w-full md:w-1/3">
-          <label className="text-sm font-semibold text-gray-600">Filter by Referee</label>
+          <label className="text-sm font-semibold text-gray-600">
+            Filter by Referee
+          </label>
           <input
             type="text"
             placeholder="Name or email..."
@@ -147,18 +177,10 @@ export const ReportsTab: React.FC = () => {
           />
         </div>
 
-        <div className="flex flex-col space-y-1 w-full md:w-1/3">
-          <label className="text-sm font-semibold text-gray-600">Filter by Date</label>
-          <input
-            type="date"
-            value={filterDate}
-            onChange={(e) => setFilterDate(e.target.value)}
-            className="border border-gray-300 rounded-lg px-4 py-2"
-          />
-        </div>
-
         <div className="flex flex-col space-y-1 w-full md:w-1/4">
-          <label className="text-sm font-semibold text-gray-600">Filter by Type</label>
+          <label className="text-sm font-semibold text-gray-600">
+            Filter by Type
+          </label>
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
@@ -171,22 +193,29 @@ export const ReportsTab: React.FC = () => {
           </select>
         </div>
 
-        <Button variant="outline" onClick={resetFilters} className="h-10 mt-1 md:mt-0">
+        <Button
+          variant="outline"
+          onClick={resetFilters}
+          className="h-10 mt-1 md:mt-0"
+        >
           🔄 Reset
         </Button>
       </div>
 
-      {/* 🧾 Reports List */}
+      {/* Reports list */}
       {loading ? (
-        <p className="text-gray-500 text-center py-8 animate-pulse">Loading reports...</p>
+        <p className="text-gray-500 text-center py-8 animate-pulse">
+          Loading reports...
+        </p>
       ) : filteredReports.length === 0 ? (
         <p className="text-gray-500 text-center py-8">No reports found.</p>
       ) : (
-        <div className="space-y-4">
+        <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredReports.map((report) => (
-            <Card
+            <div
               key={report.id}
-              className="p-4 hover:border-emerald-500 border-2 border-transparent transition-all cursor-pointer"
+              className="rounded-lg border bg-white p-4 hover:border-emerald-500 hover:shadow-lg transition-all cursor-pointer"
+              onClick={() => setSelectedReport(report)}
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1">
@@ -197,36 +226,106 @@ export const ReportsTab: React.FC = () => {
                     )}
                   </div>
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {report.referee}
+                    {report.matchDetails?.homeTeam} vs {report.matchDetails?.awayTeam}
                   </h3>
-                  <p className="text-sm text-gray-600 mb-1">📅 {report.date}</p>
+                  <p className="text-sm text-gray-600">
+                    🏟️ {report.matchDetails?.venue}
+                  </p>
                   <p className="text-sm text-gray-600 mb-2">
-                    📧 {report.refereeEmail}
+                    📅 {report.matchDetails?.date} ⏰ {report.matchDetails?.time}
                   </p>
-
-                  {report.lawBroken && (
-                    <p className="text-sm text-gray-700 mb-1">
-                      ⚖️ <strong>Law Broken:</strong> {report.lawBroken}
-                    </p>
-                  )}
-
-                  <p className="text-gray-800 whitespace-pre-line">
-                    {report.description}
-                  </p>
+                  <p className="text-sm text-gray-600">👨‍⚖️ {report.referee}</p>
                 </div>
-
-                {!report.reviewed && (
-                  <Button
-                    size="sm"
-                    className="ml-4"
-                    onClick={() => handleMarkReviewed(report.id)}
-                  >
-                    Mark as Reviewed
-                  </Button>
-                )}
               </div>
-            </Card>
+            </div>
           ))}
+        </div>
+      )}
+
+      {/* Modal */}
+      {selectedReport && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setSelectedReport(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-2xl relative overflow-y-auto max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-2xl font-bold text-emerald-700 mb-4 flex items-center gap-2">
+              🧾 Match Report Details
+            </h3>
+
+            {/* Match Info */}
+            <div className="bg-gray-50 border rounded-lg p-4 text-sm text-gray-700 space-y-1 mb-4">
+              <p>
+                ⚽ <strong>Match:</strong> {selectedReport.matchDetails?.homeTeam} vs{" "}
+                {selectedReport.matchDetails?.awayTeam}
+              </p>
+              <p>
+                🏟️ <strong>Venue:</strong>{" "}
+                {selectedReport.matchDetails?.venue || "Unknown Venue"}
+              </p>
+              <p>
+                📅 <strong>Date:</strong> {selectedReport.matchDetails?.date || "N/A"}
+              </p>
+              <p>
+                ⏰ <strong>Time:</strong> {selectedReport.matchDetails?.time || "N/A"}
+              </p>
+            </div>
+
+            {/* Incident Info */}
+            <div className="space-y-2 text-gray-800 text-sm">
+              <p>
+                <strong>Incident Type:</strong>{" "}
+                {selectedReport.type === "red_card"
+                  ? "🟥 Red Card / Misconduct"
+                  : selectedReport.type === "incident"
+                  ? "⚽ Match Incident / Observation"
+                  : "📝 General Match Report"}
+              </p>
+
+              {selectedReport.lawBroken && (
+                <p>
+                  <strong>Law Broken:</strong> {selectedReport.lawBroken}
+                </p>
+              )}
+
+              {selectedReport.timeOfIncident && (
+                <p>
+                  <strong>Time of Incident:</strong>{" "}
+                  {selectedReport.timeOfIncident}
+                </p>
+              )}
+
+              <div className="mt-3">
+                <strong>Description:</strong>
+                <p className="whitespace-pre-line mt-1 text-gray-700 border rounded-lg bg-gray-50 p-3">
+                  {selectedReport.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Referee Info */}
+            <div className="mt-4 border-t pt-3 text-sm text-gray-600">
+              <p>
+                👨‍⚖️ <strong>Referee:</strong> {selectedReport.referee}
+              </p>
+              <p>📧 {selectedReport.refereeEmail}</p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end mt-6 gap-2">
+              {!selectedReport.reviewed && (
+                <Button onClick={() => handleMarkReviewed(selectedReport.id)}>
+                  ✅ Mark as Reviewed
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setSelectedReport(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

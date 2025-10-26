@@ -188,7 +188,7 @@ export const ExecutiveDashboard: React.FC = () => {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold text-gray-900">Executive Dashboard</h2>
+       
           <p className="text-gray-600">
             Oversee appointments, results, reports, coaches & referees
           </p>

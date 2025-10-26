@@ -196,7 +196,7 @@ export const RefereeProfiles: React.FC<RefereeProfilesProps> = ({
   if (currentRefereeId && myProfile) {
     return (
       <div className="max-w-4xl mx-auto bg-white shadow-md rounded-xl p-6 space-y-6">
-        <h2 className="text-2xl font-bold text-emerald-700 mb-4">👤 My Profile</h2>
+        <h2 className="text-2xl font-bold text-emerald-700 mb-4">👤 Profile</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-700">
           {Object.entries({
