@@ -17,6 +17,7 @@ import { Card } from "./ui/Card";
 import { Button } from "./ui/Button";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+import sha256 from "crypto-js/sha256"; // ✅ Added for email hashing
 
 export const RoleBasedAuth: React.FC = () => {
   const [role, setRole] = useState<UserRole | null>(null);
@@ -46,6 +47,17 @@ export const RoleBasedAuth: React.FC = () => {
     if (roleParam) setRole(roleParam);
     if (actionParam) setAction(actionParam);
   }, []);
+
+  // 🏠 Back Button
+const BackHomeButton = () => (
+  <button
+    onClick={() => navigate("/")}
+    className="mt-8 text-gray-500 underline hover:text-emerald-600 transition"
+  >
+    ← Back to Home
+  </button>
+);
+
 
   // 🔄 Auth listener
   useEffect(() => {
@@ -114,13 +126,27 @@ export const RoleBasedAuth: React.FC = () => {
     }
   };
 
-  // 📝 Form Submission (safe for Firestore)
+  // 📝 Form Submission (safe + unique email)
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !role) return;
 
     try {
-      // 🧠 Ensure executive position uniqueness
+      // ✅ Step 0: Ensure unique email (hashed lock)
+      const emailHash = sha256(user.email.toLowerCase().trim()).toString();
+      const emailRef = doc(db, "emails", emailHash);
+      const emailSnap = await getDoc(emailRef);
+
+      if (emailSnap.exists()) {
+        setToast({
+          type: "error",
+          message: "❌ This email is already registered under another account.",
+        });
+        await signOut(auth);
+        return;
+      }
+
+      // 🧠 Step 1: Executive position uniqueness
       if (role === "executive" && executiveRole !== "Committee Member") {
         const q = query(
           collection(db, "executives"),
@@ -135,6 +161,9 @@ export const RoleBasedAuth: React.FC = () => {
           return;
         }
       }
+
+      // ✅ Step 2: Reserve email before creating user
+      await setDoc(emailRef, { uid: user.uid, createdAt: serverTimestamp() });
 
       const roleCollection =
         role === "referee"
@@ -160,13 +189,9 @@ export const RoleBasedAuth: React.FC = () => {
 
       const finalData = { ...baseData, position };
 
-      // ✅ Step 1: Create user profile first
+      // ✅ Step 3: Create user + role docs
       await setDoc(doc(db, "users", user.uid), finalData, { merge: true });
-      console.log("✅ User profile created");
-
-      // ✅ Step 2: Create role-specific record
       await setDoc(doc(db, roleCollection, user.uid), finalData, { merge: true });
-      console.log("✅ Role record created");
 
       const successMsg = isExecutive
         ? "✅ Executive registration successful! Redirecting..."
@@ -288,16 +313,6 @@ export const RoleBasedAuth: React.FC = () => {
       </form>
     );
   };
-
-  // 🏠 Back Button
-  const BackHomeButton = () => (
-    <button
-      onClick={() => navigate("/")}
-      className="mt-8 text-gray-500 underline hover:text-emerald-600 transition"
-    >
-      ← Back to Home
-    </button>
-  );
 
   // 🌟 Toast Auto-dismiss
   useEffect(() => {

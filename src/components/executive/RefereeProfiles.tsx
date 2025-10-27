@@ -2,13 +2,12 @@ import React, { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import {
   collection,
-  getDocs,
   doc,
-  getDoc,
   updateDoc,
   setDoc,
   query,
   where,
+  onSnapshot,
 } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../ui/Button";
@@ -17,6 +16,7 @@ import { toast } from "../ui/use-toast";
 interface RefereeProfile {
   uid: string;
   firstName?: string;
+  preferredName?: string;
   surname?: string;
   gender?: string;
   dob?: string;
@@ -48,11 +48,12 @@ interface RefereeProfile {
   accountNumber?: string;
   branchCode?: string;
   accountType?: string;
+  availabilityStatus?: string;
+  suspensionReason?: string;
   approved?: boolean;
   status?: string;
   createdAt?: any;
-
-  // ✅ New field
+  updatedAt?: any;
   currentLocation?: {
     lat?: number;
     lng?: number;
@@ -62,7 +63,7 @@ interface RefereeProfile {
 }
 
 interface RefereeProfilesProps {
-  currentRefereeId?: string; // if passed → shows self profile
+  currentRefereeId?: string;
   editable?: boolean;
 }
 
@@ -77,76 +78,72 @@ export const RefereeProfiles: React.FC<RefereeProfilesProps> = ({
   const [saving, setSaving] = useState(false);
   const [loadingLoc, setLoadingLoc] = useState(false);
 
-  // 🔹 Fetch all or single
+  // 🔹 Real-time listeners
   useEffect(() => {
+    let unsub: (() => void) | undefined;
+
     if (currentRefereeId) {
-      fetchSingleReferee(currentRefereeId);
+      // 🎯 Single referee view
+      const refDoc = doc(db, "referees", currentRefereeId);
+      unsub = onSnapshot(refDoc, (snap) => {
+        if (snap.exists()) {
+          setMyProfile({ uid: snap.id, ...snap.data() } as RefereeProfile);
+        }
+      });
     } else {
-      fetchReferees();
+      // 🧾 Executive dashboard view
+      const qPending = query(collection(db, "referees"), where("approved", "==", false));
+      const qApproved = query(collection(db, "referees"), where("approved", "==", true));
+
+      const unsubPending = onSnapshot(qPending, (snapshot) => {
+        setPendingRefs(
+          snapshot.docs.map((d) => ({ uid: d.id, ...d.data() })) as RefereeProfile[]
+        );
+      });
+
+      const unsubApproved = onSnapshot(qApproved, (snapshot) => {
+        setApprovedRefs(
+          snapshot.docs.map((d) => ({ uid: d.id, ...d.data() })) as RefereeProfile[]
+        );
+      });
+
+      unsub = () => {
+        unsubPending();
+        unsubApproved();
+      };
     }
+
+    return () => unsub?.();
   }, [currentRefereeId]);
 
-  const fetchSingleReferee = async (uid: string) => {
-    try {
-      const refDoc = await getDoc(doc(db, "referees", uid));
-      if (refDoc.exists()) {
-        setMyProfile({ uid, ...refDoc.data() } as RefereeProfile);
-      }
-    } catch (err) {
-      console.error("Error fetching referee profile:", err);
-    }
-  };
-
-  const fetchReferees = async () => {
-    try {
-      const pendingSnap = await getDocs(
-        query(collection(db, "referees"), where("approved", "==", false))
-      );
-      const approvedSnap = await getDocs(
-        query(collection(db, "referees"), where("approved", "==", true))
-      );
-      setPendingRefs(
-        pendingSnap.docs.map((d) => ({ uid: d.id, ...d.data() })) as RefereeProfile[]
-      );
-      setApprovedRefs(
-        approvedSnap.docs.map((d) => ({ uid: d.id, ...d.data() })) as RefereeProfile[]
-      );
-    } catch (err) {
-      console.error("Error fetching referees:", err);
-    }
-  };
-
-  // ✅ Save with merge (so it creates or updates)
+  // ✅ Save Profile (syncs both collections)
   const handleSave = async () => {
     if (!myProfile?.uid) return;
     setSaving(true);
     try {
-      await setDoc(
-        doc(db, "referees", myProfile.uid),
-        { ...myProfile, updatedAt: new Date() },
-        { merge: true }
-      );
+      const updated = { ...myProfile, updatedAt: new Date() };
+      await setDoc(doc(db, "referees", myProfile.uid), updated, { merge: true });
+      await setDoc(doc(db, "users", myProfile.uid), updated, { merge: true });
+
       toast({
         title: "✅ Profile Updated",
-        description: "Your profile and location have been saved.",
+        description: "Changes saved and synced across collections.",
       });
-      setSaving(false);
     } catch (err) {
       console.error("Save error:", err);
-      setSaving(false);
       toast({
         title: "Error",
         description: "Failed to update profile.",
         variant: "destructive",
       });
     }
+    setSaving(false);
   };
 
   const handleChange = (field: keyof RefereeProfile, value: string) => {
     setMyProfile((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
-  // ✅ Auto-location (HTML Geolocation)
   const handleGetLocation = () => {
     if (!navigator.geolocation) {
       toast({
@@ -192,82 +189,120 @@ export const RefereeProfiles: React.FC<RefereeProfilesProps> = ({
     setExpandedId(expandedId === uid ? null : uid);
   };
 
-  // 🔹 Referee view
+  // 🏷️ Label mapping
+  const fieldLabels: Record<keyof RefereeProfile, string> = {
+    uid: "UID",
+    firstName: "First Name",
+    preferredName: "Preferred Name",
+    surname: "Surname",
+    gender: "Gender",
+    dob: "Date of Birth",
+    idNumber: "ID Number",
+    nationality: "Nationality",
+    race: "Race",
+    languages: "Languages",
+    residentialAddress: "Residential Address",
+    postalAddress: "Postal Address",
+    city: "City / Town",
+    mobileNumber: "Mobile Number",
+    altContact: "Alternative Contact",
+    email: "Email",
+    yearJoined: "Year Joined",
+    experienceLevel: "Experience Level",
+    licenseNumber: "License Number",
+    boksmartNumber: "BokSmart Number",
+    boksmartExpiry: "BokSmart Expiry",
+    shortSize: "Short Size",
+    golfShirtSize: "Golf Shirt Size",
+    tshirtSize: "T-Shirt Size",
+    jacketSize: "Jacket Size",
+    refJerseySize: "Referee Jersey Size",
+    tracksuitTopSize: "Tracksuit Top Size",
+    tracksuitBottomSize: "Tracksuit Bottom Size",
+    preferredFit: "Preferred Fit",
+    bankName: "Bank Name",
+    accountHolder: "Account Holder",
+    accountNumber: "Account Number",
+    branchCode: "Branch Code",
+    accountType: "Account Type",
+    availabilityStatus: "Availability",
+    suspensionReason: "Suspension Reason",
+    approved: "Approved",
+    status: "Status",
+    createdAt: "Created At",
+    updatedAt: "Updated At",
+    currentLocation: "Current Location",
+  };
+
+  // 🧍 Referee Self-View
   if (currentRefereeId && myProfile) {
     return (
-      <div className="max-w-4xl mx-auto bg-white shadow-md rounded-xl p-6 space-y-6">
+      <div className="max-w-5xl mx-auto bg-white shadow-md rounded-xl p-6 space-y-6">
         <h2 className="text-2xl font-bold text-emerald-700 mb-4">👤 Profile</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-700">
-          {Object.entries({
-            firstName: "First Name",
-            surname: "Surname",
-            gender: "Gender",
-            dob: "Date of Birth",
-            nationality: "Nationality",
-            race: "Race",
-            mobileNumber: "Mobile Number",
-            city: "City / Town",
-            experienceLevel: "Experience Level",
-            bankName: "Bank Name",
-            accountHolder: "Account Holder",
-            accountNumber: "Account Number",
-            branchCode: "Branch Code",
-            accountType: "Account Type",
-          }).map(([key, label]) => (
-            <div key={key}>
-              <label className="block text-gray-600 font-medium">{label}</label>
-              {editable ? (
-                <input
-                  type="text"
-                  value={(myProfile as any)[key] || ""}
-                  onChange={(e) => handleChange(key as keyof RefereeProfile, e.target.value)}
-                  className="mt-1 w-full border rounded-md px-2 py-1 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              ) : (
-                <p className="text-gray-800 mt-1">{(myProfile as any)[key] || "—"}</p>
-              )}
-            </div>
-          ))}
+          {Object.entries(fieldLabels).map(([key, label]) => {
+            if (key === "currentLocation") {
+              return (
+                <div key={key} className="col-span-2">
+                  <label className="block text-gray-600 font-medium">{label}</label>
+                  {editable ? (
+                    <div className="flex flex-col sm:flex-row gap-2 mt-1">
+                      <input
+                        type="text"
+                        placeholder="Enter location or detect"
+                        value={myProfile.currentLocation?.address || ""}
+                        onChange={(e) =>
+                          setMyProfile((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  currentLocation: {
+                                    ...prev.currentLocation,
+                                    address: e.target.value,
+                                  },
+                                }
+                              : prev
+                          )
+                        }
+                        className="w-full border rounded-md px-2 py-1 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                      <Button size="sm" onClick={handleGetLocation} disabled={loadingLoc}>
+                        {loadingLoc ? "Locating..." : "📍 Detect"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-gray-800 mt-1">
+                      {myProfile.currentLocation?.address || "—"}
+                    </p>
+                  )}
+                </div>
+              );
+            }
 
-          {/* ✅ Location Field */}
-          <div className="col-span-2">
-            <label className="block text-gray-600 font-medium">Current Location</label>
-            {editable ? (
-              <div className="flex flex-col sm:flex-row gap-2 mt-1">
-                <input
-                  type="text"
-                  placeholder="Enter location or click detect"
-                  value={myProfile.currentLocation?.address || ""}
-                  onChange={(e) =>
-                    setMyProfile((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            currentLocation: {
-                              ...prev.currentLocation,
-                              address: e.target.value,
-                            },
-                          }
-                        : prev
-                    )
-                  }
-                  className="w-full border rounded-md px-2 py-1 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-                <Button size="sm" onClick={handleGetLocation} disabled={loadingLoc}>
-                  {loadingLoc ? "Locating..." : "📍 Detect"}
-                </Button>
+            if (["approved", "createdAt", "updatedAt"].includes(key))
+              return null; // skip metadata
+
+            return (
+              <div key={key}>
+                <label className="block text-gray-600 font-medium">{label}</label>
+                {editable ? (
+                  <input
+                    type="text"
+                    value={(myProfile as any)[key] || ""}
+                    onChange={(e) => handleChange(key as keyof RefereeProfile, e.target.value)}
+                    className="mt-1 w-full border rounded-md px-2 py-1 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                ) : (
+                  <p className="text-gray-800 mt-1">{(myProfile as any)[key] || "—"}</p>
+                )}
               </div>
-            ) : (
-              <p className="text-gray-800 mt-1">
-                {myProfile.currentLocation?.address || "—"}
-              </p>
-            )}
-          </div>
+            );
+          })}
         </div>
 
         {editable && (
-          <div className="flex justify-end">
+          <div className="flex justify-end pt-4">
             <Button onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "💾 Save Changes"}
             </Button>
@@ -277,34 +312,30 @@ export const RefereeProfiles: React.FC<RefereeProfilesProps> = ({
     );
   }
 
-  // 🔹 Admin view (Executives)
+  // 🧾 Executive Dashboard
   return (
     <div className="max-w-7xl mx-auto py-10 px-4">
       <h2 className="text-3xl font-bold mb-8 text-gray-800">🧾 Referee Profiles</h2>
-
       <ProfileSection
         title="Approved Referees"
         color="emerald"
         refs={approvedRefs}
         expandedId={expandedId}
         toggleExpand={toggleExpand}
-        refresh={fetchReferees}
       />
-
       <ProfileSection
         title="Pending Referees"
         color="amber"
         refs={pendingRefs}
         expandedId={expandedId}
         toggleExpand={toggleExpand}
-        refresh={fetchReferees}
       />
     </div>
   );
 };
 
 // ---------------------------
-// 📦 Section Wrapper
+// 📦 Profile Section
 // ---------------------------
 interface ProfileSectionProps {
   title: string;
@@ -312,7 +343,6 @@ interface ProfileSectionProps {
   refs: RefereeProfile[];
   expandedId: string | null;
   toggleExpand: (uid: string) => void;
-  refresh?: () => void;
 }
 
 const ProfileSection: React.FC<ProfileSectionProps> = ({
@@ -321,7 +351,6 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({
   refs,
   expandedId,
   toggleExpand,
-  refresh,
 }) => (
   <section className="mb-10">
     <h3 className={`text-2xl font-semibold text-${color}-700 mb-4`}>{title}</h3>
@@ -335,7 +364,6 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({
             referee={ref}
             expanded={expandedId === ref.uid}
             onToggle={() => toggleExpand(ref.uid)}
-            refresh={refresh}
           />
         ))}
       </div>
@@ -350,8 +378,7 @@ const RefereeCard: React.FC<{
   referee: RefereeProfile;
   expanded: boolean;
   onToggle: () => void;
-  refresh?: () => void;
-}> = ({ referee, expanded, onToggle, refresh }) => {
+}> = ({ referee, expanded, onToggle }) => {
   const handleApproval = async (approve: boolean) => {
     try {
       await updateDoc(doc(db, "referees", referee.uid), { approved: approve });
@@ -360,7 +387,6 @@ const RefereeCard: React.FC<{
         title: approve ? "✅ Approved" : "❌ Rejected",
         description: `${referee.firstName} ${referee.surname}`,
       });
-      refresh?.();
     } catch (err) {
       console.error("Error updating referee approval:", err);
     }
@@ -384,7 +410,6 @@ const RefereeCard: React.FC<{
           <p className="text-sm text-gray-500">
             {referee.email || "N/A"} • {referee.mobileNumber || "N/A"}
           </p>
-          {/* ✅ Show current location */}
           {referee.currentLocation?.address && (
             <p className="text-xs text-emerald-700 mt-1">
               📍 {referee.currentLocation.address}
@@ -408,12 +433,13 @@ const RefereeCard: React.FC<{
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.25 }}
-            className="border-t p-5 bg-gray-50 space-y-3"
+            className="border-t p-5 bg-gray-50 space-y-2 text-sm text-gray-700"
           >
-            <p><strong>Gender:</strong> {referee.gender || "-"}</p>
-            <p><strong>City:</strong> {referee.city || "-"}</p>
-            <p><strong>Experience:</strong> {referee.experienceLevel || "-"}</p>
-            <p><strong>Location:</strong> {referee.currentLocation?.address || "Not Set"}</p>
+            <p><strong>BokSmart:</strong> {referee.boksmartNumber || "—"} (Exp: {referee.boksmartExpiry || "N/A"})</p>
+            <p><strong>Experience:</strong> {referee.experienceLevel || "—"}</p>
+            <p><strong>Availability:</strong> {referee.availabilityStatus || "—"}</p>
+            <p><strong>Bank:</strong> {referee.bankName || "—"} • {referee.accountType || "—"}</p>
+            <p><strong>Location:</strong> {referee.currentLocation?.address || "—"}</p>
 
             {!referee.approved && (
               <div className="flex gap-3 pt-3">
