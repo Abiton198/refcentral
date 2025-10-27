@@ -85,46 +85,74 @@ const BackHomeButton = () => (
   }, [navigate]);
 
   // 🟢 Google Auth
-  const handleGoogleAuth = async () => {
-    if (!role || !action)
-      return alert("Please select a role and choose Register or Sign in.");
+const handleGoogleAuth = async () => {
+  if (!role || !action) {
+    return alert("Please select a role and choose Register or Sign in.");
+  }
 
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const signedUser = result.user;
-      setUser(signedUser);
+  try {
+    // ✅ Always clear any persisted Google session first
+    await signOut(auth);
 
-      const userRef = doc(db, "users", signedUser.uid);
-      const userSnap = await getDoc(userRef);
+    const provider = new GoogleAuthProvider();
 
-      if (action === "login") {
-        if (userSnap.exists()) {
-          const data = userSnap.data();
-          if (data.approved) navigate(`/dashboard/${data.role}`);
-          else setStatusMessage("✅ Waiting for executive approval...");
+    // ✅ Force Google to show account picker every time
+    provider.setCustomParameters({
+      prompt: "select_account",
+    });
+
+    // 🔐 Start Google sign-in
+    const result = await signInWithPopup(auth, provider);
+    const signedUser = result.user;
+    setUser(signedUser);
+
+    const userRef = doc(db, "users", signedUser.uid);
+    const userSnap = await getDoc(userRef);
+
+    // 🔹 LOGIN FLOW
+    if (action === "login") {
+      if (userSnap.exists()) {
+        const data = userSnap.data();
+
+        if (data.approved) {
+          navigate(`/dashboard/${data.role}`);
         } else {
-          alert("No registration found. Please register first.");
-          await signOut(auth);
+          setStatusMessage("✅ Waiting for executive approval...");
         }
-        return;
+      } else {
+        alert("No registration found. Please register first.");
+        await signOut(auth);
       }
+      return;
+    }
 
-      // Registration flow
+    // 🔹 REGISTRATION FLOW
+    if (action === "register") {
       if (!userSnap.exists()) {
+        // ✅ User not found — start new registration
         setIsNewUser(true);
         setStatusMessage(`Complete your ${role} registration below.`);
       } else {
+        // ✅ Existing user — handle approval or redirect
         const data = userSnap.data();
-        if (!data.approved)
+        if (!data.approved) {
           setStatusMessage("✅ Registration received. Waiting for executive approval...");
-        else navigate(`/dashboard/${data.role}`);
+        } else {
+          navigate(`/dashboard/${data.role}`);
+        }
       }
-    } catch (err) {
-      console.error(err);
-      setStatusMessage("Authentication failed. Please try again.");
     }
-  };
+  } catch (err: any) {
+    console.error("🔥 Google Auth Error:", err);
+    setStatusMessage("Authentication failed. Please try again.");
+    toast({
+      title: "Google Sign-In Failed",
+      description: err.message || "Unexpected error occurred.",
+      variant: "destructive",
+    });
+  }
+};
+
 
   // 📝 Form Submission (safe + unique email)
   const handleFormSubmit = async (e: React.FormEvent) => {
