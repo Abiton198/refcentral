@@ -404,56 +404,63 @@ export const RefereeDashboard: React.FC = () => {
                           Cancel
                         </Button>
                         <Button
-                          className="bg-blue-600 text-white"
-                          onClick={async () => {
-                            try {
-                              if (
-                                !resultForm.homeScore ||
-                                !resultForm.awayScore
-                              ) {
-                                toast({
-                                  title: "Incomplete",
-                                  description: "Enter both scores.",
-                                  variant: "destructive",
-                                });
-                                return;
-                              }
+  className="bg-blue-600 text-white"
+  onClick={async () => {
+    try {
+      if (!resultForm.homeScore || !resultForm.awayScore) {
+        toast({
+          title: "Incomplete",
+          description: "Enter both scores.",
+          variant: "destructive",
+        });
+        return;
+      }
 
-                              const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
+      const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
 
-                              const resultData = {
-                                resultSubmitted: true,
-                                homeScore: Number(resultForm.homeScore),
-                                awayScore: Number(resultForm.awayScore),
-                                playerOfMatch: resultForm.playerOfMatch || "",
-                                notes: resultForm.notes || "",
-                                resultSummary: summary,
-                                updatedAt: new Date(),
-                              };
+      const resultData = {
+        resultSubmitted: true,
+        homeScore: Number(resultForm.homeScore),
+        awayScore: Number(resultForm.awayScore),
+        playerOfMatch: resultForm.playerOfMatch || "",
+        notes: resultForm.notes || "",
+        resultSummary: summary,
+        updatedAt: new Date(),
+      };
 
-                              await setDoc(doc(db, "appointments", apt.id), resultData, { merge: true });
-                              await addDoc(collection(db, "results"), {
-                                ...apt,
-                                ...resultData,
-                                refereeId: currentRefereeId,
-                                refereeEmail: currentRefereeEmail,
-                              });
+      // ✅ 1. Update appointment record
+      await setDoc(doc(db, "appointments", apt.id), resultData, { merge: true });
 
-                              toast({ title: "Result saved ✅", description: summary });
-                              setExpandedResultId(null);
-                              setResultForm({});
-                            } catch (e) {
-                              console.error("Result error:", e);
-                              toast({
-                                title: "Error",
-                                description: "Failed to save result.",
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                        >
-                          💾 Save
-                        </Button>
+      // ✅ 2. Write result under same appointmentId (prevents duplicates)
+      await setDoc(doc(db, "results", apt.id), {
+        ...apt,
+        ...resultData,
+        appointmentId: apt.id,
+        refereeId: currentRefereeId,
+        refereeEmail: currentRefereeEmail,
+        createdAt: apt.createdAt || new Date(),
+      }, { merge: true });
+
+      toast({
+        title: "Result saved ✅",
+        description: summary,
+      });
+
+      setExpandedResultId(null);
+      setResultForm({});
+    } catch (e) {
+      console.error("Result error:", e);
+      toast({
+        title: "Error",
+        description: "Failed to save result.",
+        variant: "destructive",
+      });
+    }
+  }}
+>
+  💾 Save
+</Button>
+
                       </div>
                     </motion.div>
                   )}

@@ -191,7 +191,7 @@ export const RefereeReportForm: React.FC = () => {
             required
           >
             <option value="red_card">🟥 Red Card / Misconduct</option>
-            <option value="incident">⚽ Match Incident / Observation</option>
+            <option value="incident"> Match Incident / Observation</option>
             <option value="general">📝 General Match Report</option>
           </select>
         </div>
