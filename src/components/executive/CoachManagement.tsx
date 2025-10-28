@@ -7,7 +7,12 @@ import {
   collection,
   onSnapshot,
   updateDoc,
+  deleteDoc,
   doc,
+  getDocs,
+  query,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 
 interface Coach {
@@ -26,6 +31,7 @@ interface Coach {
 export const CoachManagement: React.FC = () => {
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   // ✅ Real-time Firestore listener for coaches
   useEffect(() => {
@@ -48,10 +54,10 @@ export const CoachManagement: React.FC = () => {
         status: "active",
       });
       await updateDoc(doc(db, "users", id), { approved: true });
-      alert("Coach approved successfully!");
+      alert("✅ Coach approved successfully!");
     } catch (err) {
       console.error("Error approving coach:", err);
-      alert("Failed to approve coach.");
+      alert("❌ Failed to approve coach.");
     }
   };
 
@@ -65,10 +71,10 @@ export const CoachManagement: React.FC = () => {
         suspensionReason: reason,
       });
       await updateDoc(doc(db, "users", id), { approved: false });
-      alert(`Coach suspended. Reason: ${reason}`);
+      alert(`⚠️ Coach suspended. Reason: ${reason}`);
     } catch (err) {
       console.error("Error suspending coach:", err);
-      alert("Failed to suspend coach.");
+      alert("❌ Failed to suspend coach.");
     }
   };
 
@@ -80,10 +86,54 @@ export const CoachManagement: React.FC = () => {
         suspensionReason: "",
       });
       await updateDoc(doc(db, "users", id), { approved: true });
-      alert("Coach reactivated successfully!");
+      alert("✅ Coach reactivated successfully!");
     } catch (err) {
       console.error("Error activating coach:", err);
-      alert("Failed to activate coach.");
+      alert("❌ Failed to activate coach.");
+    }
+  };
+
+  // 🚨 Delete coach and all related data
+  const handleDeleteCoach = async (coach: Coach) => {
+    if (
+      !window.confirm(
+        `⚠️ Are you sure you want to permanently delete ${coach.name} ${coach.surname || ""}? 
+This will remove their user account, reports, appointments, and all linked data.`
+      )
+    )
+      return;
+
+    setDeleting(coach.id);
+    try {
+      const batch = writeBatch(db);
+
+      // 1️⃣ Delete coach record
+      batch.delete(doc(db, "coaches", coach.id));
+
+      // 2️⃣ Delete user record (if exists)
+      batch.delete(doc(db, "users", coach.id));
+
+      // 3️⃣ Delete all reports linked to this coach
+      const reportsSnap = await getDocs(
+        query(collection(db, "reports"), where("coachId", "==", coach.id))
+      );
+      reportsSnap.forEach((d) => batch.delete(d.ref));
+
+      // 4️⃣ Delete all appointments linked to this coach
+      const apptSnap = await getDocs(
+        query(collection(db, "appointments"), where("coachId", "==", coach.id))
+      );
+      apptSnap.forEach((d) => batch.delete(d.ref));
+
+      // 5️⃣ Commit all deletions
+      await batch.commit();
+
+      alert(`🗑️ Coach ${coach.name} ${coach.surname || ""} and related data deleted successfully.`);
+    } catch (err) {
+      console.error("Error deleting coach:", err);
+      alert("❌ Failed to delete coach and related data.");
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -136,6 +186,7 @@ export const CoachManagement: React.FC = () => {
                       {coach.status ? coach.status.toUpperCase() : "PENDING"}
                     </Badge>
                   </div>
+
                   {coach.suspensionReason && (
                     <p className="text-xs text-red-600 mt-1 italic">
                       Reason: {coach.suspensionReason}
@@ -143,7 +194,7 @@ export const CoachManagement: React.FC = () => {
                   )}
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 text-right">
                   {!coach.approved && (
                     <Button
                       size="sm"
@@ -167,6 +218,16 @@ export const CoachManagement: React.FC = () => {
                       Activate
                     </Button>
                   )}
+
+                  {/* 🗑️ Delete Coach Button */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleDeleteCoach(coach)}
+                    disabled={deleting === coach.id}
+                  >
+                    {deleting === coach.id ? "Deleting..." : "🗑️ Delete"}
+                  </Button>
                 </div>
               </div>
             </Card>
