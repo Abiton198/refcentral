@@ -10,7 +10,25 @@ import {
   doc,
   getDoc,
 } from "firebase/firestore";
+import { getWeek } from "date-fns"; // ✅ Use trusted date-fns helper
 
+/** ───────────────────────────────────────────────
+ * 🧮 Helper functions
+ * (Placed ABOVE all hook logic to avoid "before initialization" errors)
+ * ───────────────────────────────────────────────
+ */
+const isSameDay = (d1: Date, d2: Date) =>
+  d1.toDateString() === d2.toDateString();
+
+const isYesterday = (d: Date, now: Date) => {
+  const diff = now.getTime() - d.getTime();
+  return diff > 0 && diff < 1000 * 60 * 60 * 24 * 2 && d.getDate() === now.getDate() - 1;
+};
+
+/** ───────────────────────────────────────────────
+ * 📊 Type definition
+ * ───────────────────────────────────────────────
+ */
 interface MatchResult {
   id: string;
   homeTeam: string;
@@ -26,6 +44,10 @@ interface MatchResult {
   appointmentId?: string;
 }
 
+/** ───────────────────────────────────────────────
+ * ⚽ ResultsView Component
+ * ───────────────────────────────────────────────
+ */
 export const ResultsView: React.FC = () => {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [refereeMap, setRefereeMap] = useState<Record<string, string>>({});
@@ -56,11 +78,7 @@ export const ResultsView: React.FC = () => {
 
   /** 🏆 Listen to results collection */
   useEffect(() => {
-    const resultsQuery = query(
-      collection(db, "results"),
-      orderBy("updatedAt", "desc")
-    );
-
+    const resultsQuery = query(collection(db, "results"), orderBy("updatedAt", "desc"));
     const unsubResults = onSnapshot(resultsQuery, (snapshot) => {
       const list: MatchResult[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data() as any;
@@ -103,7 +121,7 @@ export const ResultsView: React.FC = () => {
         };
       });
 
-      // Deduplicate by appointmentId
+      // 🧹 Deduplicate by appointmentId
       const unique = new Map<string, MatchResult>();
       for (const r of list) {
         const key = r.appointmentId || r.id;
@@ -118,11 +136,9 @@ export const ResultsView: React.FC = () => {
     return () => unsubResults();
   }, [refereeMap]);
 
-  /** 🔎 Filters + Sorting */
+  /** 🔎 Filter & Sort */
   const refereeOptions = useMemo(() => {
-    const names = Array.from(
-      new Set(results.map((r) => r.referee || "Unknown Referee"))
-    );
+    const names = Array.from(new Set(results.map((r) => r.referee || "Unknown Referee")));
     return names.sort((a, b) => a.localeCompare(b));
   }, [results]);
 
@@ -137,14 +153,8 @@ export const ResultsView: React.FC = () => {
         if (!teamHit && !refHit) return false;
       }
       if (selectedRefFilter && r.referee !== selectedRefFilter) return false;
-      if (startDate) {
-        const start = new Date(`${startDate}T00:00:00`);
-        if (r.submittedAt < start) return false;
-      }
-      if (endDate) {
-        const end = new Date(`${endDate}T23:59:59`);
-        if (r.submittedAt > end) return false;
-      }
+      if (startDate && r.submittedAt < new Date(`${startDate}T00:00:00`)) return false;
+      if (endDate && r.submittedAt > new Date(`${endDate}T23:59:59`)) return false;
       return true;
     });
 
@@ -157,7 +167,7 @@ export const ResultsView: React.FC = () => {
     return filtered;
   }, [results, searchTerm, selectedRefFilter, startDate, endDate, sortOrder]);
 
-  /** 📅 Group results by date range (Today, Yesterday, This Week, Older) */
+  /** 📅 Group results by date range */
   const groupedResults = useMemo(() => {
     const groups: Record<string, MatchResult[]> = {
       Today: [],
@@ -167,7 +177,6 @@ export const ResultsView: React.FC = () => {
     };
 
     const now = new Date();
-    const today = now.getDate();
     const currentWeek = getWeek(now);
 
     filteredResults.forEach((res) => {
@@ -184,22 +193,7 @@ export const ResultsView: React.FC = () => {
     return Object.entries(groups).filter(([_, arr]) => arr.length > 0);
   }, [filteredResults]);
 
-  /** Utility functions */
-  const isSameDay = (d1: Date, d2: Date) =>
-    d1.toDateString() === d2.toDateString();
-
-  const isYesterday = (d: Date, now: Date) => {
-    const diff = now.getTime() - d.getTime();
-    return diff > 0 && diff < 1000 * 60 * 60 * 24 * 2 && d.getDate() === now.getDate() - 1;
-  };
-
-  const getWeek = (date: Date) => {
-    const oneJan = new Date(date.getFullYear(), 0, 1);
-    const diff = date.getTime() - oneJan.getTime();
-    return Math.ceil((diff / 86400000 + oneJan.getDay() + 1) / 7);
-  };
-
-  /** Expand handler */
+  /** 🔄 Expand handler */
   const toggleExpand = async (res: MatchResult) => {
     if (expandedId === res.id) return setExpandedId(null);
     try {
@@ -221,13 +215,14 @@ export const ResultsView: React.FC = () => {
     setExpandedId(res.id);
   };
 
-  /** 🧾 UI */
+  /** 🧾 Render */
   return (
     <div className="space-y-6">
       <h3 className="text-2xl font-bold text-gray-900">🏆 Match Results</h3>
 
       {/* Filter Bar */}
       <div className="flex flex-col lg:flex-row gap-4 flex-wrap bg-gray-50 border rounded-lg p-4">
+        {/* Search */}
         <div className="flex flex-col">
           <label className="text-xs font-medium text-gray-600 mb-1">
             Search (team or ref)
@@ -241,10 +236,9 @@ export const ResultsView: React.FC = () => {
           />
         </div>
 
+        {/* Referee */}
         <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">
-            Referee
-          </label>
+          <label className="text-xs font-medium text-gray-600 mb-1">Referee</label>
           <select
             value={selectedRefFilter}
             onChange={(e) => setSelectedRefFilter(e.target.value)}
@@ -259,10 +253,9 @@ export const ResultsView: React.FC = () => {
           </select>
         </div>
 
+        {/* Date Range */}
         <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">
-            From date
-          </label>
+          <label className="text-xs font-medium text-gray-600 mb-1">From date</label>
           <input
             type="date"
             value={startDate}
@@ -270,10 +263,9 @@ export const ResultsView: React.FC = () => {
             className="border rounded-md px-3 py-2 text-sm w-40 focus:ring-emerald-500 focus:outline-none"
           />
         </div>
+
         <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">
-            To date
-          </label>
+          <label className="text-xs font-medium text-gray-600 mb-1">To date</label>
           <input
             type="date"
             value={endDate}
@@ -282,15 +274,12 @@ export const ResultsView: React.FC = () => {
           />
         </div>
 
+        {/* Sort */}
         <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">
-            Sort by
-          </label>
+          <label className="text-xs font-medium text-gray-600 mb-1">Sort by</label>
           <select
             value={sortOrder}
-            onChange={(e) =>
-              setSortOrder(e.target.value as "asc" | "desc")
-            }
+            onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
             className="border rounded-md px-3 py-2 text-sm w-36 bg-white focus:ring-emerald-500 focus:outline-none"
           >
             <option value="desc">Latest first</option>
@@ -315,7 +304,7 @@ export const ResultsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Grouped List */}
+      {/* Grouped Results */}
       {groupedResults.length === 0 ? (
         <p className="p-6 text-center text-gray-500 border rounded-lg bg-white shadow-sm">
           No results match your filters.
