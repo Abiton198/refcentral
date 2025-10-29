@@ -9,10 +9,10 @@ export const mockReferees: User[] = [
 
 export const mockTeams = [
   'Parks', 'Progress', 'NMU', 'Gardens', 'Partensie', 'Harlequeins', 
-  'Brumbies', 'Trying Stars', 'Star of Hope', 'KruisFontein'
+  'Brumbies', 'Trying Stars', 'Star of Hope', 'KruisFontein', 'Joubertina',
 ];
 
 export const mockVenues = [
-  'Parks', 'NMU Stadium', 'Rhodes Uni', 'Kruisfontein', 
-  'Adcock Stadium', 'Central Stadium'
+  'Lorne Park', 'NMU Stadium', 'Rhodes Uni', 'Kruisfontein', 
+  'Adcock Stadium', 'Central Stadium', 'Joubertina',
 ];
