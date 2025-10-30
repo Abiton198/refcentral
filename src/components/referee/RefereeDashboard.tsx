@@ -3,8 +3,9 @@ import { Card, StatCard } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { db } from "../../lib/firebase";
-import { ReportSubmission } from "./ReportSubmission";
+import { RefereeUnifiedReportCenter } from "./RefereeUnifiedReportCenter";
 import { RefereeProfiles } from "../executive/RefereeProfiles";
+import { Timestamp } from "firebase/firestore";
 import {
   collection,
   onSnapshot,
@@ -12,10 +13,9 @@ import {
   where,
   doc,
   updateDoc,
-  addDoc,
+  setDoc,
   getDoc,
   orderBy,
-  setDoc,
 } from "firebase/firestore";
 import {
   getAuth,
@@ -49,25 +49,23 @@ export const RefereeDashboard: React.FC = () => {
   const currentRefereeEmail = user?.email || "";
   const profilePhoto = profile?.photoURL || user?.photoURL || "/default-avatar.png";
 
-  // 🔹 Logout
+  // Logout
   const handleLogout = async () => {
     try {
       await signOut(auth);
       toast({ title: "Signed Out", description: "Logged out successfully." });
       window.location.href = "/";
-    } catch (err) {
+    } catch {
       toast({ title: "Error", description: "Failed to log out.", variant: "destructive" });
     }
   };
 
-  // 🔹 Fetch or Create Referee Profile
+  // Fetch or create referee profile
   useEffect(() => {
     const fetchProfile = async () => {
       if (!currentRefereeId) return;
-
       const refDoc = doc(db, "referees", currentRefereeId);
       const snap = await getDoc(refDoc);
-
       if (snap.exists()) {
         setProfile({ id: snap.id, ...snap.data() });
       } else {
@@ -82,20 +80,17 @@ export const RefereeDashboard: React.FC = () => {
         setProfile(defaultProfile);
       }
     };
-
     fetchProfile();
   }, [currentRefereeId, currentRefereeEmail]);
 
-  // 🔹 Upload Profile Image
+  // Upload profile image
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentRefereeId) return;
-
     try {
       setUploading(true);
       const fileRef = storageRef(storage, `referees/${currentRefereeId}/profile.jpg`);
       const uploadTask = uploadBytesResumable(fileRef, file);
-
       uploadTask.on(
         "state_changed",
         null,
@@ -109,9 +104,10 @@ export const RefereeDashboard: React.FC = () => {
             photoURL: downloadURL,
             updatedAt: new Date(),
           });
-          if (auth.currentUser) await updateAuthProfile(auth.currentUser, { photoURL: downloadURL });
+          if (auth.currentUser)
+            await updateAuthProfile(auth.currentUser, { photoURL: downloadURL });
           setProfile((p: any) => ({ ...p, photoURL: downloadURL }));
-          toast({ title: "Profile photo updated ✅" });
+          toast({ title: "Profile photo updated" });
           setUploading(false);
         }
       );
@@ -121,7 +117,7 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // 🔹 Toggle Availability
+  // Toggle availability
   const toggleAvailability = async () => {
     if (!profile?.id) return;
     const newStatus = profile.availabilityStatus === "available" ? "unavailable" : "available";
@@ -131,31 +127,50 @@ export const RefereeDashboard: React.FC = () => {
         updatedAt: new Date(),
       });
       setProfile((prev: any) => ({ ...prev, availabilityStatus: newStatus }));
-      toast({
-        title: `You are now marked as ${newStatus === "available" ? "✅ Available" : "❌ Unavailable"}`,
-      });
+      toast({ title: `You are now ${newStatus === "available" ? "Available" : "Unavailable"}` });
     } catch (err) {
       console.error("Availability toggle error:", err);
-      toast({
-        title: "Error",
-        description: "Failed to update availability.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to update availability.", variant: "destructive" });
     }
   };
 
-  // 🔹 Fetch Appointments
+  // Fetch appointments (Referee or AR only)
   useEffect(() => {
     if (!currentRefereeEmail) return;
-    const q = query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail));
-    const unsub = onSnapshot(q, (snap) => {
-      setAppointments(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
-    return () => unsub();
+
+    const q1 = query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail));
+    const q2 = query(collection(db, "appointments"), where("arEmail", "==", currentRefereeEmail));
+
+    const unsub1 = onSnapshot(q1, (snap) => updateAppointments(snap, "referee"));
+    const unsub2 = onSnapshot(q2, (snap) => updateAppointments(snap, "ar"));
+
+  // updates the appointments
+  function updateAppointments(snap: any, role: string) {
+  const newDocs = snap.docs.map((d: any) => ({ id: d.id, ...d.data(), _role: role }));
+
+  setAppointments((prev) => {
+    const merged = [...prev, ...newDocs];
+
+    // ✅ Deduplicate by ID — keeps only one per appointment ID
+    const unique = merged.reduce((acc: any[], curr) => {
+      const exists = acc.find((a) => a.id === curr.id);
+      if (!exists) acc.push(curr);
+      return acc;
+    }, []);
+
+    return unique;
+  });
+}
+
+
+    setLoading(false);
+    return () => {
+      unsub1();
+      unsub2();
+    };
   }, [currentRefereeEmail]);
 
-  // 🔹 Fetch Reports
+  // Fetch reports
   useEffect(() => {
     if (!currentRefereeId) return;
     const q = query(
@@ -163,36 +178,50 @@ export const RefereeDashboard: React.FC = () => {
       where("refereeId", "==", currentRefereeId),
       orderBy("createdAt", "desc")
     );
-    const unsub = onSnapshot(q, (snap) => setReports(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setReports(list);
+    });
     return () => unsub();
   }, [currentRefereeId]);
 
-  // 🔹 Accept / Reject appointment
-  const handleResponse = async (id: string, response: "accepted" | "rejected") => {
+  // Accept / Reject appointment
+  const handleResponse = async (id: string, response: "accepted" | "rejected", role: string) => {
     try {
-      await updateDoc(doc(db, "appointments", id), {
+      const aptRef = doc(db, "appointments", id);
+        await updateDoc(aptRef, {
+      [`responses.${role}`]: {
         status: response,
-        respondedAt: new Date().toISOString(),
+        respondedAt: Timestamp.now(),
+      },
+      // ✅ keep top-level status in sync
+      status: response,
+      updatedAt: Timestamp.now(),
+    });
+
+      toast({ title: "Updated", description: `You have ${response} this appointment.` });
+    } catch (error: any) {
+      console.error("UPDATE FAILED:", error);
+      toast({
+        title: "Permission Denied",
+        description: error.message || "You cannot update this appointment.",
+        variant: "destructive",
       });
-      toast({ title: "Updated", description: `Appointment ${response}` });
-    } catch {
-      toast({ title: "Error", description: "Failed to update appointment", variant: "destructive" });
     }
   };
 
-  // 🔹 Stats
-  const pending = appointments.filter((a) => a.status === "pending").length;
-  const accepted = appointments.filter((a) => a.status === "accepted").length;
-  const rejected = appointments.filter((a) => a.status === "rejected").length;
+  // Compute stats
+  const pending = appointments.filter((a) => a.responses?.[a._role]?.status === "pending" || !a.responses?.[a._role]).length;
+  const accepted = appointments.filter((a) => a.responses?.[a._role]?.status === "accepted").length;
+  const rejected = appointments.filter((a) => a.responses?.[a._role]?.status === "rejected").length;
 
-  // 🔹 Profile view toggle
   if (viewProfile) {
     return (
       <div className="p-6">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold">👤 My Profile</h2>
+          <h2 className="text-3xl font-bold">My Profile</h2>
           <Button variant="outline" onClick={() => setViewProfile(false)}>
-            ← Back
+            Back
           </Button>
         </div>
         <RefereeProfiles currentRefereeId={currentRefereeId} editable />
@@ -207,17 +236,13 @@ export const RefereeDashboard: React.FC = () => {
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-3xl font-bold text-gray-900">Referee Dashboard</h2>
-
-            {/* Availability Toggle */}
             <button
               onClick={toggleAvailability}
               className="flex items-center gap-1 text-sm font-medium cursor-pointer"
             >
               <span
                 className={`inline-block w-3 h-3 rounded-full ${
-                  profile?.availabilityStatus === "available"
-                    ? "bg-green-500"
-                    : "bg-red-500"
+                  profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"
                 }`}
               ></span>
               {profile?.availabilityStatus === "available" ? (
@@ -241,7 +266,6 @@ export const RefereeDashboard: React.FC = () => {
               alt="profile"
             />
             <label className="absolute bottom-0 right-0 bg-emerald-600 text-white text-xs px-1.5 py-0.5 rounded cursor-pointer">
-              📷
               <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
             </label>
           </div>
@@ -250,17 +274,17 @@ export const RefereeDashboard: React.FC = () => {
             onClick={handleLogout}
             className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
           >
-            🚪 Logout
+            Logout
           </Button>
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard title="Pending" value={pending} icon="⏳" color="amber" />
-        <StatCard title="Accepted" value={accepted} icon="✅" color="green" />
-        <StatCard title="Rejected" value={rejected} icon="❌" color="red" />
-        <StatCard title="Total" value={accepted + rejected} icon="🏆" color="emerald" />
+        <StatCard title="Pending" value={pending} icon="Pending" color="amber" />
+        <StatCard title="Accepted" value={accepted} icon="Accepted" color="green" />
+        <StatCard title="Rejected" value={rejected} icon="Rejected" color="red" />
+        <StatCard title="Total" value={accepted + rejected} icon="Trophy" color="emerald" />
       </div>
 
       {/* Appointments */}
@@ -274,13 +298,16 @@ export const RefereeDashboard: React.FC = () => {
           <div className="space-y-4">
             {appointments.map((apt) => {
               const isExpanded = expandedResultId === apt.id;
-              const status = apt.status || "pending";
+              const status = apt.responses?.[apt._role]?.status || "pending";
+              const yourRole = apt._role === "referee" ? "Referee" : "Assistant Referee";
+              const yourName = apt._role === "referee" ? apt.refereeName : apt.arName;
+
               return (
-                <Card key={apt.id} className="p-5 border shadow-sm hover:shadow-md transition">
+                <Card key={`${apt.id}-${apt._role}`} className="p-5 border shadow-sm hover:shadow-md transition">
                   <div className="flex justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <h3 className="font-semibold text-lg">
                           {apt.homeTeam} vs {apt.awayTeam}
                         </h3>
                         <Badge
@@ -295,33 +322,39 @@ export const RefereeDashboard: React.FC = () => {
                           {status.toUpperCase()}
                         </Badge>
                       </div>
+
                       <p className="text-gray-600">
-                        📅 {apt.date} • ⏰ {apt.time}
+                        {apt.date} • {apt.time} • {apt.venue}
                       </p>
-                      <p className="text-gray-600">📍 {apt.venue}</p>
-                      <p className="text-gray-500 text-sm">
-                        🏆 {apt.gameType?.toUpperCase()} • {apt.game}
+                      <p className="text-sm text-gray-600">
+                        {apt.gameType?.toUpperCase()} • {apt.game}
                       </p>
 
+                      <p className="mt-2 text-sm font-medium text-emerald-700">
+                        Your Role: {yourRole} ({yourName})
+                      </p>
+
+                      {/* PENDING */}
                       {status === "pending" && (
                         <div className="mt-3 flex gap-2">
                           <Button
                             size="sm"
                             className="bg-green-600 text-white"
-                            onClick={() => handleResponse(apt.id, "accepted")}
+                            onClick={() => handleResponse(apt.id, "accepted", apt._role)}
                           >
-                            ✅ Accept
+                            Accept
                           </Button>
                           <Button
                             size="sm"
                             className="bg-red-500 text-white"
-                            onClick={() => handleResponse(apt.id, "rejected")}
+                            onClick={() => handleResponse(apt.id, "rejected", apt._role)}
                           >
-                            ❌ Decline
+                            Decline
                           </Button>
                         </div>
                       )}
 
+                      {/* ACCEPTED */}
                       {status === "accepted" && (
                         <div className="mt-3 flex gap-2 flex-wrap">
                           <Button
@@ -329,7 +362,7 @@ export const RefereeDashboard: React.FC = () => {
                             className="bg-blue-600 text-white"
                             onClick={() => setActiveReportId(apt.id)}
                           >
-                            📄 Report
+                            Report
                           </Button>
                           <Button
                             size="sm"
@@ -338,19 +371,20 @@ export const RefereeDashboard: React.FC = () => {
                               setExpandedResultId(isExpanded ? null : apt.id)
                             }
                           >
-                            {apt.resultSubmitted ? "👁 Edit Result" : "🏆 Submit Result"}
+                            {apt.resultSubmitted ? "Edit Result" : "Submit Result"}
                           </Button>
                         </div>
                       )}
 
                       {apt.resultSubmitted && !isExpanded && (
                         <p className="mt-2 text-emerald-700 font-medium">
-                          ✅ {apt.resultSummary}
+                          {apt.resultSummary}
                         </p>
                       )}
                     </div>
                   </div>
 
+                  {/* RESULT FORM */}
                   {isExpanded && (
                     <motion.div
                       initial={{ opacity: 0 }}
@@ -397,70 +431,62 @@ export const RefereeDashboard: React.FC = () => {
                         }
                       />
                       <div className="flex justify-end gap-2 mt-3">
-                        <Button
-                          variant="outline"
-                          onClick={() => setExpandedResultId(null)}
-                        >
+                        <Button variant="outline" onClick={() => setExpandedResultId(null)}>
                           Cancel
                         </Button>
                         <Button
-  className="bg-blue-600 text-white"
-  onClick={async () => {
-    try {
-      if (!resultForm.homeScore || !resultForm.awayScore) {
-        toast({
-          title: "Incomplete",
-          description: "Enter both scores.",
-          variant: "destructive",
-        });
-        return;
-      }
+                          className="bg-blue-600 text-white"
+                          onClick={async () => {
+                            try {
+                              if (!resultForm.homeScore || !resultForm.awayScore) {
+                                toast({
+                                  title: "Incomplete",
+                                  description: "Enter both scores.",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
 
-      const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
+                              const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
+                              const resultData = {
+                                resultSubmitted: true,
+                                homeScore: Number(resultForm.homeScore),
+                                awayScore: Number(resultForm.awayScore),
+                                playerOfMatch: resultForm.playerOfMatch || "",
+                                notes: resultForm.notes || "",
+                                resultSummary: summary,
+                                updatedAt: new Date(),
+                              };
 
-      const resultData = {
-        resultSubmitted: true,
-        homeScore: Number(resultForm.homeScore),
-        awayScore: Number(resultForm.awayScore),
-        playerOfMatch: resultForm.playerOfMatch || "",
-        notes: resultForm.notes || "",
-        resultSummary: summary,
-        updatedAt: new Date(),
-      };
+                              await setDoc(doc(db, "appointments", apt.id), resultData, { merge: true });
+                              await setDoc(
+                                doc(db, "results", apt.id),
+                                {
+                                  ...apt,
+                                  ...resultData,
+                                  appointmentId: apt.id,
+                                  refereeId: currentRefereeId,
+                                  refereeEmail: currentRefereeEmail,
+                                  createdAt: apt.createdAt || new Date(),
+                                },
+                                { merge: true }
+                              );
 
-      // ✅ 1. Update appointment record
-      await setDoc(doc(db, "appointments", apt.id), resultData, { merge: true });
-
-      // ✅ 2. Write result under same appointmentId (prevents duplicates)
-      await setDoc(doc(db, "results", apt.id), {
-        ...apt,
-        ...resultData,
-        appointmentId: apt.id,
-        refereeId: currentRefereeId,
-        refereeEmail: currentRefereeEmail,
-        createdAt: apt.createdAt || new Date(),
-      }, { merge: true });
-
-      toast({
-        title: "Result saved ✅",
-        description: summary,
-      });
-
-      setExpandedResultId(null);
-      setResultForm({});
-    } catch (e) {
-      console.error("Result error:", e);
-      toast({
-        title: "Error",
-        description: "Failed to save result.",
-        variant: "destructive",
-      });
-    }
-  }}
->
-  💾 Save
-</Button>
-
+                              toast({ title: "Result saved", description: summary });
+                              setExpandedResultId(null);
+                              setResultForm({});
+                            } catch (e) {
+                              console.error("Result error:", e);
+                              toast({
+                                title: "Error",
+                                description: "Failed to save result.",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          Save
+                        </Button>
                       </div>
                     </motion.div>
                   )}
@@ -481,20 +507,42 @@ export const RefereeDashboard: React.FC = () => {
             {reports.map((r) => (
               <Card
                 key={r.id}
-                className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer"
+                className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer transition"
                 onClick={() => setActiveReportId(r.id)}
               >
-                <p className="font-semibold text-gray-900">{r.teams}</p>
-                <p className="text-sm text-gray-600">{r.matchDate}</p>
-                <p className="text-gray-500 text-sm">📋 {r.type?.toUpperCase()}</p>
+                <p className="font-semibold text-gray-900">
+                  {r.teams || `${r.matchDetails?.homeTeam} vs ${r.matchDetails?.awayTeam}`}
+                </p>
+                <p className="text-sm text-gray-600">
+                  {r.matchDate || r.matchDetails?.date || "No date"}
+                </p>
+                <p className="text-gray-500 text-sm">
+                  {r.type?.replaceAll("_", " ")?.toUpperCase()}
+                </p>
               </Card>
             ))}
           </div>
         )}
       </div>
 
+      {/* Report modal */}
       {activeReportId && (
-        <ReportSubmission appointmentId={activeReportId} onClose={() => setActiveReportId(null)} />
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40"
+          onClick={() => setActiveReportId(null)}
+        >
+          <div
+            className="bg-white rounded-lg p-6 max-w-4xl w-full shadow-lg overflow-y-auto max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <RefereeUnifiedReportCenter reportId={activeReportId} onClose={() => setActiveReportId(null)} />
+            <div className="flex justify-end mt-4">
+              <Button variant="outline" onClick={() => setActiveReportId(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

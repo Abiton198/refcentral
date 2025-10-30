@@ -11,7 +11,13 @@ import {
   onSnapshot,
   serverTimestamp,
   arrayUnion,
+  query,
+  where,
+  getDocs,
+  writeBatch,
+  deleteDoc,
 } from "firebase/firestore";
+
 
 interface Referee {
   id: string;
@@ -41,6 +47,8 @@ export const RefereeManagement: React.FC = () => {
   const [activeTab, setActiveTab] = useState<"pending" | "approved" | "suspended">("approved");
   const [searchTerm, setSearchTerm] = useState("");
   const currentExec = auth.currentUser?.email || "Unknown Executive";
+  const [deleting, setDeleting] = useState<string | null>(null);
+
 
   // 🔄 Real-time Firestore sync
   useEffect(() => {
@@ -105,6 +113,52 @@ export const RefereeManagement: React.FC = () => {
     await addTrail(id, "Reactivated");
     alert("✅ Reactivated");
   };
+
+// 🚨 Delete referee and all related data
+const handleDeleteReferee = async (ref: Referee) => {
+  if (
+    !window.confirm(
+      `⚠️ Are you sure you want to permanently delete ${ref.name} ${
+        ref.surname || ""
+      }?\n\nThis will remove their user account, match reports, appointments, and all linked data.`
+    )
+  )
+    return;
+
+  setDeleting(ref.id);
+  try {
+    const batch = writeBatch(db);
+
+    // 1️⃣ Delete referee profile
+    batch.delete(doc(db, "referees", ref.id));
+
+    // 2️⃣ Delete user record
+    batch.delete(doc(db, "users", ref.id));
+
+    // 3️⃣ Delete reports by this referee
+    const reportsSnap = await getDocs(
+      query(collection(db, "reports"), where("refereeId", "==", ref.id))
+    );
+    reportsSnap.forEach((d) => batch.delete(d.ref));
+
+    // 4️⃣ Delete appointments linked to this referee
+    const apptSnap = await getDocs(
+      query(collection(db, "appointments"), where("refereeId", "==", ref.id))
+    );
+    apptSnap.forEach((d) => batch.delete(d.ref));
+
+    // ✅ Commit all deletions
+    await batch.commit();
+
+    alert(`🗑️ Referee ${ref.name} ${ref.surname || ""} and related data deleted successfully.`);
+  } catch (error) {
+    console.error("Error deleting referee:", error);
+    alert("❌ Failed to delete referee and related data.");
+  } finally {
+    setDeleting(null);
+  }
+};
+
 
   // 🔍 Filtering & search
   const filteredReferees = useMemo(() => {
@@ -236,10 +290,24 @@ export const RefereeManagement: React.FC = () => {
                   </Button>
                 </div>
               </div>
+    
+    {/* button handles deleting */}
+        <Button
+        size="sm"
+        variant="outline"
+        onClick={() => handleDeleteReferee(ref)}
+        disabled={deleting === ref.id}
+      >
+        {deleting === ref.id ? "Deleting..." : "🗑️ Delete"}
+      </Button>
+
+
             </Card>
           );
         })}
       </div>
+
+
 
       {/* Profile modal */}
       {selectedRefereeId && (

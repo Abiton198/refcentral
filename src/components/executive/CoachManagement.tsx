@@ -32,6 +32,7 @@ export const CoachManagement: React.FC = () => {
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  
 
   // ✅ Real-time Firestore listener for coaches
   useEffect(() => {

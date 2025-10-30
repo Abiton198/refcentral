@@ -233,16 +233,16 @@ export const ExecutiveDashboard: React.FC = () => {
                           {apt.homeTeam} vs {apt.awayTeam}
                         </h3>
                         <Badge
-                          variant={
-                            apt.status === "accepted"
-                              ? "success"
-                              : apt.status === "rejected"
-                              ? "danger"
-                              : "warning"
-                          }
-                        >
-                          {apt.status.toUpperCase()}
-                        </Badge>
+                            variant={
+                              apt.status === "accepted"
+                                ? "success"
+                                : apt.status === "rejected"
+                                ? "danger"
+                                : "warning"
+                            }
+                          >
+                            {(apt.status || "pending").toUpperCase()}
+                          </Badge>
                         {apt.isSchoolGame && (
                           <Badge variant="outline" className="border-emerald-600 text-emerald-700">
                             🏫 School Game
@@ -254,7 +254,10 @@ export const ExecutiveDashboard: React.FC = () => {
                         📅 {apt.date} • ⏰ {apt.time}
                       </p>
                       <p className="text-gray-600">📍 {apt.venue}</p>
-                      <p className="text-gray-600">🎯 {apt.gameType || "General Match"}</p>
+                      
+                      <p className="text-gray-600">
+                        🎯 {(apt.gameType || "General Match").toUpperCase()}
+                      </p>
                       <p className="text-gray-600">👨‍⚖️ {apt.mainReferee}</p>
                     </div>
 
