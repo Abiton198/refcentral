@@ -15,9 +15,7 @@ import {
   where,
   getDocs,
   writeBatch,
-  deleteDoc,
 } from "firebase/firestore";
-
 
 interface Referee {
   id: string;
@@ -44,11 +42,12 @@ export const RefereeManagement: React.FC = () => {
   const [referees, setReferees] = useState<Referee[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRefereeId, setSelectedRefereeId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"pending" | "approved" | "suspended">("approved");
+  const [activeTab, setActiveTab] = useState<"pending" | "approved" | "suspended">(
+    "approved"
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const currentExec = auth.currentUser?.email || "Unknown Executive";
   const [deleting, setDeleting] = useState<string | null>(null);
-
 
   // 🔄 Real-time Firestore sync
   useEffect(() => {
@@ -78,7 +77,7 @@ export const RefereeManagement: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // 🧾 Helper: log admin actions
+  // 🧾 Log admin actions
   const addTrail = async (id: string, action: string, reason?: string | null) => {
     await updateDoc(doc(db, "referees", id), {
       activityTrail: arrayUnion({
@@ -91,6 +90,7 @@ export const RefereeManagement: React.FC = () => {
     });
   };
 
+  // ✅ Approve referee
   const handleApprove = async (id: string) => {
     await updateDoc(doc(db, "referees", id), { approved: true, status: "active" });
     await updateDoc(doc(db, "users", id), { approved: true, role: "referee" });
@@ -98,69 +98,68 @@ export const RefereeManagement: React.FC = () => {
     alert("✅ Approved");
   };
 
+  // 🚫 Suspend referee
   const handleSuspend = async (id: string) => {
     const reason = prompt("Enter suspension reason:");
     if (!reason) return;
-    await updateDoc(doc(db, "referees", id), { status: "suspended", suspensionReason: reason });
+    await updateDoc(doc(db, "referees", id), {
+      status: "suspended",
+      suspensionReason: reason,
+    });
     await updateDoc(doc(db, "users", id), { approved: false });
     await addTrail(id, "Suspended", reason);
     alert("🚫 Suspended");
   };
 
+  // 🔄 Reactivate referee
   const handleActivate = async (id: string) => {
-    await updateDoc(doc(db, "referees", id), { status: "active", suspensionReason: "" });
+    await updateDoc(doc(db, "referees", id), {
+      status: "active",
+      suspensionReason: "",
+    });
     await updateDoc(doc(db, "users", id), { approved: true });
     await addTrail(id, "Reactivated");
     alert("✅ Reactivated");
   };
 
-// 🚨 Delete referee and all related data
-const handleDeleteReferee = async (ref: Referee) => {
-  if (
-    !window.confirm(
-      `⚠️ Are you sure you want to permanently delete ${ref.name} ${
-        ref.surname || ""
-      }?\n\nThis will remove their user account, match reports, appointments, and all linked data.`
+  // 🗑️ Delete referee + related data
+  const handleDeleteReferee = async (ref: Referee) => {
+    if (
+      !window.confirm(
+        `⚠️ Are you sure you want to permanently delete ${ref.name} ${
+          ref.surname || ""
+        }?\n\nThis will remove their user account, match reports, appointments, and all linked data.`
+      )
     )
-  )
-    return;
+      return;
 
-  setDeleting(ref.id);
-  try {
-    const batch = writeBatch(db);
+    setDeleting(ref.id);
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "referees", ref.id));
+      batch.delete(doc(db, "users", ref.id));
 
-    // 1️⃣ Delete referee profile
-    batch.delete(doc(db, "referees", ref.id));
+      const reportsSnap = await getDocs(
+        query(collection(db, "reports"), where("refereeId", "==", ref.id))
+      );
+      reportsSnap.forEach((d) => batch.delete(d.ref));
 
-    // 2️⃣ Delete user record
-    batch.delete(doc(db, "users", ref.id));
+      const apptSnap = await getDocs(
+        query(collection(db, "appointments"), where("refereeId", "==", ref.id))
+      );
+      apptSnap.forEach((d) => batch.delete(d.ref));
 
-    // 3️⃣ Delete reports by this referee
-    const reportsSnap = await getDocs(
-      query(collection(db, "reports"), where("refereeId", "==", ref.id))
-    );
-    reportsSnap.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      alert(`🗑️ Referee ${ref.name} ${ref.surname || ""} deleted successfully.`);
+    } catch (error) {
+      console.error("Error deleting referee:", error);
+      alert("❌ Failed to delete referee and related data.");
+    } finally {
+      setDeleting(null);
+    }
+  };
 
-    // 4️⃣ Delete appointments linked to this referee
-    const apptSnap = await getDocs(
-      query(collection(db, "appointments"), where("refereeId", "==", ref.id))
-    );
-    apptSnap.forEach((d) => batch.delete(d.ref));
-
-    // ✅ Commit all deletions
-    await batch.commit();
-
-    alert(`🗑️ Referee ${ref.name} ${ref.surname || ""} and related data deleted successfully.`);
-  } catch (error) {
-    console.error("Error deleting referee:", error);
-    alert("❌ Failed to delete referee and related data.");
-  } finally {
-    setDeleting(null);
-  }
-};
-
-
-  // 🔍 Filtering & search
+  // 🔍 Filter & search
   const filteredReferees = useMemo(() => {
     const term = searchTerm.toLowerCase();
     return referees
@@ -180,7 +179,17 @@ const handleDeleteReferee = async (ref: Referee) => {
       );
   }, [referees, activeTab, searchTerm]);
 
-  if (loading) return <div className="text-center text-gray-500 py-10">Loading referees…</div>;
+  // 🧮 Live counts for each tab
+  const counts = useMemo(() => {
+    return {
+      pending: referees.filter((r) => !r.approved).length,
+      approved: referees.filter((r) => r.approved && r.status !== "suspended").length,
+      suspended: referees.filter((r) => r.status === "suspended").length,
+    };
+  }, [referees]);
+
+  if (loading)
+    return <div className="text-center text-gray-500 py-10">Loading referees…</div>;
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4">
@@ -196,13 +205,13 @@ const handleDeleteReferee = async (ref: Referee) => {
         />
       </div>
 
-      {/* Tabs */}
+      {/* Tabs with counts */}
       <div className="flex space-x-4 border-b pb-2 mb-4">
-        {["pending", "approved", "suspended"].map((tab) => (
+        {(["pending", "approved", "suspended"] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab as any)}
-            className={`px-4 py-2 rounded-t-lg font-medium ${
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 rounded-t-lg font-medium flex items-center gap-2 ${
               activeTab === tab
                 ? "bg-emerald-600 text-white"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -212,12 +221,19 @@ const handleDeleteReferee = async (ref: Referee) => {
               ? "⏳ Pending"
               : tab === "approved"
               ? "✅ Approved"
-              : "🚫 Suspended"}
+              : "🚫 Suspended"}{" "}
+            <span
+              className={`text-sm font-semibold ${
+                activeTab === tab ? "text-white" : "text-emerald-600"
+              }`}
+            >
+              ({counts[tab]})
+            </span>
           </button>
         ))}
       </div>
 
-      {/* Cards */}
+      {/* Referee cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filteredReferees.map((ref) => {
           const availabilityColor =
@@ -228,7 +244,10 @@ const handleDeleteReferee = async (ref: Referee) => {
               : "bg-gray-400";
 
           return (
-            <Card key={ref.id} className="p-4 shadow-sm hover:shadow-md transition">
+            <Card
+              key={ref.id}
+              className="p-4 shadow-sm hover:shadow-md transition relative"
+            >
               <div className="flex justify-between">
                 <div className="flex gap-3">
                   <img
@@ -290,24 +309,21 @@ const handleDeleteReferee = async (ref: Referee) => {
                   </Button>
                 </div>
               </div>
-    
-    {/* button handles deleting */}
-        <Button
-        size="sm"
-        variant="outline"
-        onClick={() => handleDeleteReferee(ref)}
-        disabled={deleting === ref.id}
-      >
-        {deleting === ref.id ? "Deleting..." : "🗑️ Delete"}
-      </Button>
 
-
+              {/* Delete Button */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-3"
+                onClick={() => handleDeleteReferee(ref)}
+                disabled={deleting === ref.id}
+              >
+                {deleting === ref.id ? "Deleting..." : "🗑️ Delete"}
+              </Button>
             </Card>
           );
         })}
       </div>
-
-
 
       {/* Profile modal */}
       {selectedRefereeId && (
