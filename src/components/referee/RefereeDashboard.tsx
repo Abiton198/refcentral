@@ -135,40 +135,46 @@ export const RefereeDashboard: React.FC = () => {
   };
 
   // Fetch appointments (Referee or AR only)
-  useEffect(() => {
-    if (!currentRefereeEmail) return;
+useEffect(() => {
+  if (!currentRefereeEmail) return;
 
-    const q1 = query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail));
-    const q2 = query(collection(db, "appointments"), where("arEmail", "==", currentRefereeEmail));
+  // listen to both referee and AR assignments
+  const qRef = query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail));
+  const qAR = query(collection(db, "appointments"), where("arEmail", "==", currentRefereeEmail));
 
-    const unsub1 = onSnapshot(q1, (snap) => updateAppointments(snap, "referee"));
-    const unsub2 = onSnapshot(q2, (snap) => updateAppointments(snap, "ar"));
+  let combined: any[] = [];
 
-  // updates the appointments
-  function updateAppointments(snap: any, role: string) {
-  const newDocs = snap.docs.map((d: any) => ({ id: d.id, ...d.data(), _role: role }));
+  const unsubRef = onSnapshot(qRef, (snap) => {
+    const refs = snap.docs.map((d) => ({ id: d.id, ...d.data(), _role: "referee" }));
+    combined = [...refs, ...combined.filter((a) => a._role !== "referee")];
+    setAppointments(deduplicate(combined));
+  });
 
-  setAppointments((prev) => {
-    const merged = [...prev, ...newDocs];
+  const unsubAR = onSnapshot(qAR, (snap) => {
+    const ars = snap.docs.map((d) => ({ id: d.id, ...d.data(), _role: "ar" }));
+    combined = [...ars, ...combined.filter((a) => a._role !== "ar")];
+    setAppointments(deduplicate(combined));
+  });
 
-    // ✅ Deduplicate by ID — keeps only one per appointment ID
-    const unique = merged.reduce((acc: any[], curr) => {
+  function deduplicate(list: any[]) {
+    return list.reduce((acc: any[], curr) => {
       const exists = acc.find((a) => a.id === curr.id);
       if (!exists) acc.push(curr);
+      else {
+        // replace existing with latest snapshot version
+        acc = acc.map((a) => (a.id === curr.id ? curr : a));
+      }
       return acc;
     }, []);
+  }
 
-    return unique;
-  });
-}
+  setLoading(false);
 
-
-    setLoading(false);
-    return () => {
-      unsub1();
-      unsub2();
-    };
-  }, [currentRefereeEmail]);
+  return () => {
+    unsubRef();
+    unsubAR();
+  };
+}, [currentRefereeEmail]);
 
   // Fetch reports
   useEffect(() => {
