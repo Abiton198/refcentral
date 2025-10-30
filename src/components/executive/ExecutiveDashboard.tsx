@@ -409,11 +409,8 @@ export const ExecutiveDashboard: React.FC = () => {
           )}
         </TabsContent>
 
-        {/* 🏟️ Teams Tab — new addition */}
+        {/* 🏟️ Teams Tab */}
         <TabsContent value="teams">
-          <h3 className="text-2xl font-bold text-gray-900 mb-4">
-            Team Registration
-          </h3>
           <TeamRegistrationForm />
         </TabsContent>
 
