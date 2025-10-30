@@ -14,12 +14,12 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { mockTeams, mockVenues } from "../../data/mockData";
 import { toast } from "@/components/ui/use-toast";
 
 export const AppointmentForm: React.FC = () => {
   const [referees, setReferees] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
+  const [teams, setTeams] = useState<any[]>([]); // ✅ Dynamic teams from Firestore
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -51,6 +51,25 @@ export const AppointmentForm: React.FC = () => {
     });
     return () => unsub();
   }, []);
+
+  // ✅ Fetch teams registered by executives
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "teams"), (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setTeams(data);
+    });
+    return () => unsub();
+  }, []);
+
+  // ✅ Auto-populate venue when a home team is selected
+  useEffect(() => {
+    if (formData.homeTeam && teams.length > 0) {
+      const selectedTeam = teams.find((t) => t.name === formData.homeTeam);
+      if (selectedTeam && selectedTeam.homeGround) {
+        setFormData((prev) => ({ ...prev, venue: selectedTeam.homeGround }));
+      }
+    }
+  }, [formData.homeTeam, teams]);
 
   // ✅ Fetch appointments
   useEffect(() => {
@@ -102,7 +121,8 @@ export const AppointmentForm: React.FC = () => {
         return;
       }
 
-      const fullName = `${selectedRef.name || ""} ${selectedRef.surname || ""}`.trim() || "Unnamed Referee";
+      const fullName =
+        `${selectedRef.name || ""} ${selectedRef.surname || ""}`.trim() || "Unnamed Referee";
 
       // ✅ Simplified appointment structure (Referee + AR only)
       const appointmentData = {
@@ -276,9 +296,9 @@ export const AppointmentForm: React.FC = () => {
             required
           >
             <option value="">Select Home Team</option>
-            {mockTeams.map((team) => (
-              <option key={team} value={team}>
-                {team}
+            {teams.map((team) => (
+              <option key={team.id} value={team.name}>
+                {team.name}
               </option>
             ))}
           </select>
@@ -290,27 +310,24 @@ export const AppointmentForm: React.FC = () => {
             required
           >
             <option value="">Select Away Team</option>
-            {mockTeams.map((team) => (
-              <option key={team} value={team}>
-                {team}
-              </option>
-            ))}
+            {teams
+              .filter((t) => t.name !== formData.homeTeam)
+              .map((team) => (
+                <option key={team.id} value={team.name}>
+                  {team.name}
+                </option>
+              ))}
           </select>
 
-          {/* Venue */}
-          <select
+          {/* Venue (auto-populates based on home team) */}
+          <input
+            type="text"
             value={formData.venue}
             onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
             className="w-full border rounded-lg px-4 py-2"
+            placeholder="Venue (auto-filled from home team)"
             required
-          >
-            <option value="">Select Venue</option>
-            {mockVenues.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+          />
 
           {/* Game Type */}
           <select
@@ -368,7 +385,8 @@ export const AppointmentForm: React.FC = () => {
             >
               <option value="">Select Referee</option>
               {referees.map((ref) => {
-                const fullName = `${ref.name || ""} ${ref.surname || ""}`.trim() || "Unnamed Referee";
+                const fullName =
+                  `${ref.name || ""} ${ref.surname || ""}`.trim() || "Unnamed Referee";
                 return (
                   <option key={ref.id} value={fullName}>
                     {fullName}
@@ -414,16 +432,22 @@ export const AppointmentForm: React.FC = () => {
                       {appt.appointedBy && (
                         <p className="text-xs text-gray-500 mt-1">
                           👤 Appointed by:{" "}
-                          <span className="font-medium text-gray-700">{appt.appointedBy}</span>
+                          <span className="font-medium text-gray-700">
+                            {appt.appointedBy}
+                          </span>
                         </p>
                       )}
                       {appt.auditTrail && appt.auditTrail.length > 0 && (
                         <div className="mt-3 bg-gray-50 border rounded p-2">
-                          <p className="font-medium text-sm text-gray-700 mb-1">🧾 Audit Trail:</p>
+                          <p className="font-medium text-sm text-gray-700 mb-1">
+                            🧾 Audit Trail:
+                          </p>
                           <ul className="text-xs text-gray-600 space-y-1 max-h-24 overflow-y-auto">
                             {appt.auditTrail.map((log: any, i: number) => (
                               <li key={i}>
-                                <span className="font-semibold text-gray-800">{log.by}</span>{" "}
+                                <span className="font-semibold text-gray-800">
+                                  {log.by}
+                                </span>{" "}
                                 {log.action} — {log.details}{" "}
                                 <span className="text-gray-400">
                                   ({new Date(log.timestamp).toLocaleString()})
@@ -438,7 +462,11 @@ export const AppointmentForm: React.FC = () => {
                       <Button size="sm" onClick={() => handleEdit(appt)}>
                         ✏️ Edit
                       </Button>
-                      <Button size="sm" variant="danger" onClick={() => handleDelete(appt.id)}>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => handleDelete(appt.id)}
+                      >
                         🗑️ Delete
                       </Button>
                     </div>
