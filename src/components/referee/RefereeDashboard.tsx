@@ -5,29 +5,9 @@ import { Button } from "../ui/Button";
 import { db } from "../../lib/firebase";
 import { RefereeUnifiedReportCenter } from "./RefereeUnifiedReportCenter";
 import { RefereeProfiles } from "../executive/RefereeProfiles";
-import { Timestamp } from "firebase/firestore";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  doc,
-  updateDoc,
-  setDoc,
-  getDoc,
-  orderBy,
-} from "firebase/firestore";
-import {
-  getAuth,
-  signOut,
-  updateProfile as updateAuthProfile,
-} from "firebase/auth";
-import {
-  getStorage,
-  ref as storageRef,
-  uploadBytesResumable,
-  getDownloadURL,
-} from "firebase/storage";
+import { Timestamp, getDoc, updateDoc, setDoc, doc, collection, query, where, orderBy, onSnapshot, arrayUnion, serverTimestamp } from "firebase/firestore";
+import { getAuth, signOut, updateProfile as updateAuthProfile } from "firebase/auth";
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { toast } from "@/components/ui/use-toast";
 import { motion } from "framer-motion";
 
@@ -49,7 +29,7 @@ export const RefereeDashboard: React.FC = () => {
   const currentRefereeEmail = user?.email || "";
   const profilePhoto = profile?.photoURL || user?.photoURL || "/default-avatar.png";
 
-  // Logout
+  // 🔹 Logout handler
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -60,7 +40,7 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // Fetch or create referee profile
+  // 🔹 Fetch or create referee profile
   useEffect(() => {
     const fetchProfile = async () => {
       if (!currentRefereeId) return;
@@ -83,7 +63,7 @@ export const RefereeDashboard: React.FC = () => {
     fetchProfile();
   }, [currentRefereeId, currentRefereeEmail]);
 
-  // Upload profile image
+  // 🔹 Upload profile image
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentRefereeId) return;
@@ -117,7 +97,7 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // Toggle availability
+  // 🔹 Toggle availability
   const toggleAvailability = async () => {
     if (!profile?.id) return;
     const newStatus = profile.availabilityStatus === "available" ? "unavailable" : "available";
@@ -134,49 +114,44 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // Fetch appointments (Referee or AR only)
-useEffect(() => {
-  if (!currentRefereeEmail) return;
+  // 🔹 Fetch appointments (for both Referee and AR)
+  useEffect(() => {
+    if (!currentRefereeEmail) return;
 
-  // listen to both referee and AR assignments
-  const qRef = query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail));
-  const qAR = query(collection(db, "appointments"), where("arEmail", "==", currentRefereeEmail));
+    const qRef = query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail));
+    const qAR = query(collection(db, "appointments"), where("arEmail", "==", currentRefereeEmail));
 
-  let combined: any[] = [];
+    let combined: any[] = [];
 
-  const unsubRef = onSnapshot(qRef, (snap) => {
-    const refs = snap.docs.map((d) => ({ id: d.id, ...d.data(), _role: "referee" }));
-    combined = [...refs, ...combined.filter((a) => a._role !== "referee")];
-    setAppointments(deduplicate(combined));
-  });
+    const unsubRef = onSnapshot(qRef, (snap) => {
+      const refs = snap.docs.map((d) => ({ id: d.id, ...d.data(), _role: "referee" }));
+      combined = [...refs, ...combined.filter((a) => a._role !== "referee")];
+      setAppointments(deduplicate(combined));
+    });
 
-  const unsubAR = onSnapshot(qAR, (snap) => {
-    const ars = snap.docs.map((d) => ({ id: d.id, ...d.data(), _role: "ar" }));
-    combined = [...ars, ...combined.filter((a) => a._role !== "ar")];
-    setAppointments(deduplicate(combined));
-  });
+    const unsubAR = onSnapshot(qAR, (snap) => {
+      const ars = snap.docs.map((d) => ({ id: d.id, ...d.data(), _role: "ar" }));
+      combined = [...ars, ...combined.filter((a) => a._role !== "ar")];
+      setAppointments(deduplicate(combined));
+    });
 
-  function deduplicate(list: any[]) {
-    return list.reduce((acc: any[], curr) => {
-      const exists = acc.find((a) => a.id === curr.id);
-      if (!exists) acc.push(curr);
-      else {
-        // replace existing with latest snapshot version
-        acc = acc.map((a) => (a.id === curr.id ? curr : a));
-      }
-      return acc;
-    }, []);
-  }
+    function deduplicate(list: any[]) {
+      return list.reduce((acc: any[], curr) => {
+        const exists = acc.find((a) => a.id === curr.id);
+        if (!exists) acc.push(curr);
+        else acc = acc.map((a) => (a.id === curr.id ? curr : a));
+        return acc;
+      }, []);
+    }
 
-  setLoading(false);
+    setLoading(false);
+    return () => {
+      unsubRef();
+      unsubAR();
+    };
+  }, [currentRefereeEmail]);
 
-  return () => {
-    unsubRef();
-    unsubAR();
-  };
-}, [currentRefereeEmail]);
-
-  // Fetch reports
+  // 🔹 Fetch reports
   useEffect(() => {
     if (!currentRefereeId) return;
     const q = query(
@@ -191,20 +166,18 @@ useEffect(() => {
     return () => unsub();
   }, [currentRefereeId]);
 
-  // Accept / Reject appointment
+  // 🔹 Accept / Reject appointment
   const handleResponse = async (id: string, response: "accepted" | "rejected", role: string) => {
     try {
       const aptRef = doc(db, "appointments", id);
-        await updateDoc(aptRef, {
-      [`responses.${role}`]: {
+      await updateDoc(aptRef, {
+        [`responses.${role}`]: {
+          status: response,
+          respondedAt: Timestamp.now(),
+        },
         status: response,
-        respondedAt: Timestamp.now(),
-      },
-      // ✅ keep top-level status in sync
-      status: response,
-      updatedAt: Timestamp.now(),
-    });
-
+        updatedAt: Timestamp.now(),
+      });
       toast({ title: "Updated", description: `You have ${response} this appointment.` });
     } catch (error: any) {
       console.error("UPDATE FAILED:", error);
@@ -216,11 +189,12 @@ useEffect(() => {
     }
   };
 
-  // Compute stats
+  // 🔹 Compute summary stats
   const pending = appointments.filter((a) => a.responses?.[a._role]?.status === "pending" || !a.responses?.[a._role]).length;
   const accepted = appointments.filter((a) => a.responses?.[a._role]?.status === "accepted").length;
   const rejected = appointments.filter((a) => a.responses?.[a._role]?.status === "rejected").length;
 
+  // 🔹 Profile view mode
   if (viewProfile) {
     return (
       <div className="p-6">
@@ -237,20 +211,13 @@ useEffect(() => {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
+      {/* ---------- Header ---------- */}
       <div className="flex justify-between items-center">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-3xl font-bold text-gray-900">Referee Dashboard</h2>
-            <button
-              onClick={toggleAvailability}
-              className="flex items-center gap-1 text-sm font-medium cursor-pointer"
-            >
-              <span
-                className={`inline-block w-3 h-3 rounded-full ${
-                  profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"
-                }`}
-              ></span>
+            <button onClick={toggleAvailability} className="flex items-center gap-1 text-sm font-medium cursor-pointer">
+              <span className={`inline-block w-3 h-3 rounded-full ${profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"}`}></span>
               {profile?.availabilityStatus === "available" ? (
                 <span className="text-green-700">Available</span>
               ) : (
@@ -275,17 +242,13 @@ useEffect(() => {
               <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
             </label>
           </div>
-          <Button
-            variant="outline"
-            onClick={handleLogout}
-            className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
-          >
+          <Button variant="outline" onClick={handleLogout} className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white">
             Logout
           </Button>
         </div>
       </div>
 
-      {/* Stats */}
+      {/* ---------- Stats ---------- */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard title="Pending" value={pending} icon="Pending" color="amber" />
         <StatCard title="Accepted" value={accepted} icon="Accepted" color="green" />
@@ -293,7 +256,7 @@ useEffect(() => {
         <StatCard title="Total" value={accepted + rejected} icon="Trophy" color="emerald" />
       </div>
 
-      {/* Appointments */}
+      {/* ---------- Appointments ---------- */}
       <div>
         <h3 className="text-2xl font-bold mb-4">Your Appointments</h3>
         {loading ? (
@@ -313,48 +276,37 @@ useEffect(() => {
                   <div className="flex justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold text-lg">
-                          {apt.homeTeam} vs {apt.awayTeam}
-                        </h3>
-                        <Badge
-                          variant={
-                            status === "accepted"
-                              ? "success"
-                              : status === "rejected"
-                              ? "danger"
-                              : "warning"
-                          }
-                        >
-                          {status.toUpperCase()}
-                        </Badge>
+                        <h3 className="font-semibold text-lg">{apt.homeTeam} vs {apt.awayTeam}</h3>
+                        <Badge variant={status === "accepted" ? "success" : status === "rejected" ? "danger" : "warning"}>{status.toUpperCase()}</Badge>
                       </div>
-
-                      <p className="text-gray-600">
-                        {apt.date} • {apt.time} • {apt.venue}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {apt.gameType?.toUpperCase()} • {apt.game}
-                      </p>
-
+                      <p className="text-gray-600">{apt.date} • {apt.time} • {apt.venue}</p>
+                      <p className="text-sm text-gray-600">{apt.gameType?.toUpperCase()} • {apt.game}</p>
                       <p className="mt-2 text-sm font-medium text-emerald-700">
                         Your Role: {yourRole} ({yourName})
                       </p>
 
+                      {/* 🔹 Display live audit trail */}
+                      {apt.auditTrail && apt.auditTrail.length > 0 && (
+                        <div className="mt-3 bg-gray-50 border rounded p-2">
+                          <p className="font-medium text-sm text-gray-700 mb-1">🧾 Audit Trail:</p>
+                          <ul className="text-xs text-gray-600 space-y-1 max-h-24 overflow-y-auto">
+                            {apt.auditTrail.map((log: any, i: number) => (
+                              <li key={i}>
+                                <span className="font-semibold text-gray-800">{log.by}</span> — {log.action}: {log.details}{" "}
+                                <span className="text-gray-400">({new Date(log.timestamp).toLocaleString()})</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
                       {/* PENDING */}
                       {status === "pending" && (
                         <div className="mt-3 flex gap-2">
-                          <Button
-                            size="sm"
-                            className="bg-green-600 text-white"
-                            onClick={() => handleResponse(apt.id, "accepted", apt._role)}
-                          >
+                          <Button size="sm" className="bg-green-600 text-white" onClick={() => handleResponse(apt.id, "accepted", apt._role)}>
                             Accept
                           </Button>
-                          <Button
-                            size="sm"
-                            className="bg-red-500 text-white"
-                            onClick={() => handleResponse(apt.id, "rejected", apt._role)}
-                          >
+                          <Button size="sm" className="bg-red-500 text-white" onClick={() => handleResponse(apt.id, "rejected", apt._role)}>
                             Decline
                           </Button>
                         </div>
@@ -363,134 +315,90 @@ useEffect(() => {
                       {/* ACCEPTED */}
                       {status === "accepted" && (
                         <div className="mt-3 flex gap-2 flex-wrap">
-                          <Button
-                            size="sm"
-                            className="bg-blue-600 text-white"
-                            onClick={() => setActiveReportId(apt.id)}
-                          >
+                          <Button size="sm" className="bg-blue-600 text-white" onClick={() => setActiveReportId(apt.id)}>
                             Report
                           </Button>
-                          <Button
-                            size="sm"
-                            className="bg-emerald-600 text-white"
-                            onClick={() =>
-                              setExpandedResultId(isExpanded ? null : apt.id)
-                            }
-                          >
+                          <Button size="sm" className="bg-emerald-600 text-white" onClick={() => setExpandedResultId(isExpanded ? null : apt.id)}>
                             {apt.resultSubmitted ? "Edit Result" : "Submit Result"}
                           </Button>
                         </div>
                       )}
 
                       {apt.resultSubmitted && !isExpanded && (
-                        <p className="mt-2 text-emerald-700 font-medium">
-                          {apt.resultSummary}
-                        </p>
+                        <p className="mt-2 text-emerald-700 font-medium">{apt.resultSummary}</p>
                       )}
                     </div>
                   </div>
 
-                  {/* RESULT FORM */}
+                  {/* 🔹 RESULT FORM with audit logging */}
                   {isExpanded && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="mt-4 border-t pt-3"
-                    >
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 border-t pt-3">
                       <h4 className="font-semibold mb-2">Enter Match Result</h4>
                       <div className="grid sm:grid-cols-2 gap-3 mb-3">
-                        <input
-                          type="number"
-                          placeholder="Home score"
-                          className="border rounded px-2 py-1"
-                          value={resultForm.homeScore ?? apt.homeScore ?? ""}
-                          onChange={(e) =>
-                            setResultForm({ ...resultForm, homeScore: e.target.value })
-                          }
-                        />
-                        <input
-                          type="number"
-                          placeholder="Away score"
-                          className="border rounded px-2 py-1"
-                          value={resultForm.awayScore ?? apt.awayScore ?? ""}
-                          onChange={(e) =>
-                            setResultForm({ ...resultForm, awayScore: e.target.value })
-                          }
-                        />
+                        <input type="number" placeholder="Home score" className="border rounded px-2 py-1"
+                          value={resultForm.homeScore ?? apt.homeScore ?? ""} onChange={(e) => setResultForm({ ...resultForm, homeScore: e.target.value })} />
+                        <input type="number" placeholder="Away score" className="border rounded px-2 py-1"
+                          value={resultForm.awayScore ?? apt.awayScore ?? ""} onChange={(e) => setResultForm({ ...resultForm, awayScore: e.target.value })} />
                       </div>
-                      <input
-                        type="text"
-                        placeholder="Player of the match"
-                        className="border w-full rounded px-2 py-1 mb-2"
-                        value={resultForm.playerOfMatch ?? apt.playerOfMatch ?? ""}
-                        onChange={(e) =>
-                          setResultForm({ ...resultForm, playerOfMatch: e.target.value })
-                        }
-                      />
-                      <textarea
-                        placeholder="Notes"
-                        rows={3}
-                        className="border w-full rounded px-2 py-1"
-                        value={resultForm.notes ?? apt.notes ?? ""}
-                        onChange={(e) =>
-                          setResultForm({ ...resultForm, notes: e.target.value })
-                        }
-                      />
+                      <input type="text" placeholder="Player of the match" className="border w-full rounded px-2 py-1 mb-2"
+                        value={resultForm.playerOfMatch ?? apt.playerOfMatch ?? ""} onChange={(e) => setResultForm({ ...resultForm, playerOfMatch: e.target.value })} />
+                      <textarea placeholder="Notes" rows={3} className="border w-full rounded px-2 py-1"
+                        value={resultForm.notes ?? apt.notes ?? ""} onChange={(e) => setResultForm({ ...resultForm, notes: e.target.value })} />
                       <div className="flex justify-end gap-2 mt-3">
                         <Button variant="outline" onClick={() => setExpandedResultId(null)}>
                           Cancel
                         </Button>
-                        <Button
-                          className="bg-blue-600 text-white"
-                          onClick={async () => {
-                            try {
-                              if (!resultForm.homeScore || !resultForm.awayScore) {
-                                toast({
-                                  title: "Incomplete",
-                                  description: "Enter both scores.",
-                                  variant: "destructive",
-                                });
-                                return;
-                              }
-
-                              const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
-                              const resultData = {
-                                resultSubmitted: true,
-                                homeScore: Number(resultForm.homeScore),
-                                awayScore: Number(resultForm.awayScore),
-                                playerOfMatch: resultForm.playerOfMatch || "",
-                                notes: resultForm.notes || "",
-                                resultSummary: summary,
-                                updatedAt: new Date(),
-                              };
-
-                              await setDoc(doc(db, "appointments", apt.id), resultData, { merge: true });
-                              await setDoc(
-                                doc(db, "results", apt.id),
-                                {
-                                  ...apt,
-                                  ...resultData,
-                                  appointmentId: apt.id,
-                                  refereeId: currentRefereeId,
-                                  refereeEmail: currentRefereeEmail,
-                                  createdAt: apt.createdAt || new Date(),
-                                },
-                                { merge: true }
-                              );
-
-                              toast({ title: "Result saved", description: summary });
-                              setExpandedResultId(null);
-                              setResultForm({});
-                            } catch (e) {
-                              console.error("Result error:", e);
-                              toast({
-                                title: "Error",
-                                description: "Failed to save result.",
-                                variant: "destructive",
-                              });
+                        <Button className="bg-blue-600 text-white" onClick={async () => {
+                          try {
+                            if (!resultForm.homeScore || !resultForm.awayScore) {
+                              toast({ title: "Incomplete", description: "Enter both scores.", variant: "destructive" });
+                              return;
                             }
-                          }}
-                        >
+
+                            const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
+                            const resultData = {
+                              resultSubmitted: true,
+                              homeScore: Number(resultForm.homeScore),
+                              awayScore: Number(resultForm.awayScore),
+                              playerOfMatch: resultForm.playerOfMatch || "",
+                              notes: resultForm.notes || "",
+                              resultSummary: summary,
+                              updatedAt: serverTimestamp(),
+                            };
+
+                            // ✅ Save result to 'results' collection
+                            await setDoc(doc(db, "results", apt.id), {
+                              ...apt,
+                              ...resultData,
+                              appointmentId: apt.id,
+                              refereeId: currentRefereeId,
+                              refereeEmail: currentRefereeEmail,
+                              createdAt: apt.createdAt || serverTimestamp(),
+                            }, { merge: true });
+
+                            // ✅ Append audit entry to appointment
+                            const aptRef = doc(db, "appointments", apt.id);
+                            const auditEntry = {
+                              by: currentRefereeEmail,
+                              action: "Result Submitted",
+                              details: summary,
+                              playerOfMatch: resultForm.playerOfMatch || "N/A",
+                              timestamp: new Date().toISOString(),
+                            };
+
+                            await updateDoc(aptRef, {
+                              ...resultData,
+                              auditTrail: arrayUnion(auditEntry),
+                            });
+
+                            toast({ title: "Result saved", description: summary });
+                            setExpandedResultId(null);
+                            setResultForm({});
+                          } catch (e) {
+                            console.error("Result error:", e);
+                            toast({ title: "Error", description: "Failed to save result.", variant: "destructive" });
+                          }
+                        }}>
                           Save
                         </Button>
                       </div>
@@ -503,7 +411,7 @@ useEffect(() => {
         )}
       </div>
 
-      {/* Reports */}
+      {/* ---------- Reports ---------- */}
       <div>
         <h3 className="text-2xl font-bold mb-4">My Reports</h3>
         {reports.length === 0 ? (
@@ -511,36 +419,21 @@ useEffect(() => {
         ) : (
           <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {reports.map((r) => (
-              <Card
-                key={r.id}
-                className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer transition"
-                onClick={() => setActiveReportId(r.id)}
-              >
-                <p className="font-semibold text-gray-900">
-                  {r.teams || `${r.matchDetails?.homeTeam} vs ${r.matchDetails?.awayTeam}`}
-                </p>
-                <p className="text-sm text-gray-600">
-                  {r.matchDate || r.matchDetails?.date || "No date"}
-                </p>
-                <p className="text-gray-500 text-sm">
-                  {r.type?.replaceAll("_", " ")?.toUpperCase()}
-                </p>
+              <Card key={r.id} className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer transition"
+                onClick={() => setActiveReportId(r.id)}>
+                <p className="font-semibold text-gray-900">{r.teams || `${r.matchDetails?.homeTeam} vs ${r.matchDetails?.awayTeam}`}</p>
+                <p className="text-sm text-gray-600">{r.matchDate || r.matchDetails?.date || "No date"}</p>
+                <p className="text-gray-500 text-sm">{r.type?.replaceAll("_", " ")?.toUpperCase()}</p>
               </Card>
             ))}
           </div>
         )}
       </div>
 
-      {/* Report modal */}
+      {/* ---------- Report Modal ---------- */}
       {activeReportId && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40"
-          onClick={() => setActiveReportId(null)}
-        >
-          <div
-            className="bg-white rounded-lg p-6 max-w-4xl w-full shadow-lg overflow-y-auto max-h-[90vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40" onClick={() => setActiveReportId(null)}>
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full shadow-lg overflow-y-auto max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <RefereeUnifiedReportCenter reportId={activeReportId} onClose={() => setActiveReportId(null)} />
             <div className="flex justify-end mt-4">
               <Button variant="outline" onClick={() => setActiveReportId(null)}>
