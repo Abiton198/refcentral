@@ -1,27 +1,54 @@
+// src/pages/referee/RefereeDashboard.tsx
 import React, { useEffect, useState } from "react";
 import { Card, StatCard } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { db } from "../../lib/firebase";
-import { RefereeUnifiedReportCenter } from "./RefereeUnifiedReportCenter";
+import { RefereeUnifiedReportCenter } from "./reports/RefereeUnifiedReportCenter";
 import { RefereeProfiles } from "../executive/RefereeProfiles";
-import { Timestamp, getDoc, updateDoc, setDoc, doc, collection, query, where, orderBy, onSnapshot, arrayUnion, serverTimestamp } from "firebase/firestore";
+import { ReportDetailModal } from "./reports/ReportDetailModal";
+import {
+  Timestamp,
+  getDoc,
+  updateDoc,
+  setDoc,
+  getDocs,
+  doc,
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  arrayUnion,
+  serverTimestamp,
+} from "firebase/firestore";
 import { getAuth, signOut, updateProfile as updateAuthProfile } from "firebase/auth";
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { toast } from "@/components/ui/use-toast";
 import { motion } from "framer-motion";
 
+/**
+ * Referee Dashboard
+ * - View appointments, accept/reject, submit results
+ * - Submit reports (card/general) immediately after accepting
+ * - View/edit reports in detail
+ * - Full audit trail
+ * - Stats: Pending, Accepted, Rejected, Reports, Total
+ */
 export const RefereeDashboard: React.FC = () => {
+  // === STATE ===
   const [appointments, setAppointments] = useState<any[]>([]);
   const [profile, setProfile] = useState<any | null>(null);
-  const [reports, setReports] = useState<any[]>([]);
+  const [reports, setReports] = useState<any[]>([]); // Grouped by matchId
   const [loading, setLoading] = useState(true);
-  const [activeReportId, setActiveReportId] = useState<string | null>(null);
+  const [activeReportId, setActiveReportId] = useState<string | null>(null); // For edit modal
   const [uploading, setUploading] = useState(false);
   const [viewProfile, setViewProfile] = useState(false);
-  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
+  const [expandedResultId, setExpandedResultId] = useState<string | null>(null); // Result form
   const [resultForm, setResultForm] = useState<any>({});
+  const [showReportCenter, setShowReportCenter] = useState<string | null>(null); // appointmentId
 
+  // === AUTH & FIREBASE ===
   const auth = getAuth();
   const user = auth.currentUser;
   const storage = getStorage();
@@ -29,7 +56,7 @@ export const RefereeDashboard: React.FC = () => {
   const currentRefereeEmail = user?.email || "";
   const profilePhoto = profile?.photoURL || user?.photoURL || "/default-avatar.png";
 
-  // 🔹 Logout handler
+  // === LOGOUT ===
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -40,7 +67,7 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // 🔹 Fetch or create referee profile
+  // === FETCH OR CREATE REFEREE PROFILE ===
   useEffect(() => {
     const fetchProfile = async () => {
       if (!currentRefereeId) return;
@@ -63,7 +90,7 @@ export const RefereeDashboard: React.FC = () => {
     fetchProfile();
   }, [currentRefereeId, currentRefereeEmail]);
 
-  // 🔹 Upload profile image
+  // === UPLOAD PROFILE IMAGE ===
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentRefereeId) return;
@@ -97,7 +124,7 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // 🔹 Toggle availability
+  // === TOGGLE AVAILABILITY ===
   const toggleAvailability = async () => {
     if (!profile?.id) return;
     const newStatus = profile.availabilityStatus === "available" ? "unavailable" : "available";
@@ -114,7 +141,7 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // 🔹 Fetch appointments (for both Referee and AR)
+  // === FETCH APPOINTMENTS (Referee + AR) ===
   useEffect(() => {
     if (!currentRefereeEmail) return;
 
@@ -151,7 +178,7 @@ export const RefereeDashboard: React.FC = () => {
     };
   }, [currentRefereeEmail]);
 
-  // 🔹 Fetch reports
+  // === FETCH REPORTS + GROUP BY MATCH + AUDIT TRAIL ===
   useEffect(() => {
     if (!currentRefereeId) return;
     const q = query(
@@ -159,17 +186,74 @@ export const RefereeDashboard: React.FC = () => {
       where("refereeId", "==", currentRefereeId),
       orderBy("createdAt", "desc")
     );
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setReports(list);
+    const unsub = onSnapshot(q, async (snap) => {
+      const rawReports = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const reportsWithAudit = await Promise.all(
+        rawReports.map(async (r) => {
+          let auditTrail = r.auditTrail || [];
+          try {
+            const auditSnap = await getDocs(collection(db, "reports", r.id, "auditTrail"));
+            auditTrail = auditSnap.docs.map((a) => a.data());
+          } catch (e) {
+            console.warn("Audit subcollection fetch failed, using root-level:", e);
+          }
+
+          const matchDisplay = r.homeTeam && r.awayTeam
+            ? `${r.homeTeam} vs ${r.awayTeam}`
+            : r.teams || "Unknown Match";
+
+          return {
+            id: r.id,
+            matchId: r.matchId || r.id,
+            type: r.type || "general_report",
+            matchDisplay,
+            createdAt: r.createdAt?.toDate(),
+            reviewed: r.reviewed || false,
+            reviewedBy: r.reviewedBy || null,
+            reviewedAt: r.reviewedAt?.toDate() || null,
+            auditTrail: auditTrail.sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp)),
+          };
+        })
+      );
+
+      // Group by matchId
+      const grouped = reportsWithAudit.reduce((acc: any, r) => {
+        const key = r.matchId;
+        if (!acc[key]) {
+          acc[key] = {
+            matchId: key,
+            matchDisplay: r.matchDisplay,
+            reports: [],
+            auditTrail: [],
+          };
+        }
+        acc[key].reports.push({ id: r.id, type: r.type, reviewed: r.reviewed, reviewedBy: r.reviewedBy, reviewedAt: r.reviewedAt });
+        acc[key].auditTrail.push(...r.auditTrail);
+        return acc;
+      }, {});
+
+      const mergedReports = Object.values(grouped).map((g: any) => {
+        g.auditTrail = [...new Set(g.auditTrail.map((a: any) => JSON.stringify(a)))].map((s: string) => JSON.parse(s));
+        g.auditTrail.sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp));
+        return g;
+      });
+
+      setReports(mergedReports);
     });
     return () => unsub();
   }, [currentRefereeId]);
 
-  // 🔹 Accept / Reject appointment
+  // === ACCEPT / REJECT APPOINTMENT ===
   const handleResponse = async (id: string, response: "accepted" | "rejected", role: string) => {
     try {
       const aptRef = doc(db, "appointments", id);
+      const auditEntry = {
+        by: currentRefereeEmail,
+        action: response === "accepted" ? "Accepted" : "Rejected",
+        details: `Appointment as ${role}`,
+        timestamp: new Date().toISOString(),
+      };
+
       await updateDoc(aptRef, {
         [`responses.${role}`]: {
           status: response,
@@ -177,7 +261,9 @@ export const RefereeDashboard: React.FC = () => {
         },
         status: response,
         updatedAt: Timestamp.now(),
+        auditTrail: arrayUnion(auditEntry),
       });
+
       toast({ title: "Updated", description: `You have ${response} this appointment.` });
     } catch (error: any) {
       console.error("UPDATE FAILED:", error);
@@ -189,12 +275,12 @@ export const RefereeDashboard: React.FC = () => {
     }
   };
 
-  // 🔹 Compute summary stats
+  // === COMPUTE STATS ===
   const pending = appointments.filter((a) => a.responses?.[a._role]?.status === "pending" || !a.responses?.[a._role]).length;
   const accepted = appointments.filter((a) => a.responses?.[a._role]?.status === "accepted").length;
   const rejected = appointments.filter((a) => a.responses?.[a._role]?.status === "rejected").length;
 
-  // 🔹 Profile view mode
+  // === PROFILE VIEW ===
   if (viewProfile) {
     return (
       <div className="p-6">
@@ -209,9 +295,10 @@ export const RefereeDashboard: React.FC = () => {
     );
   }
 
+  // === MAIN RENDER ===
   return (
     <div className="space-y-8">
-      {/* ---------- Header ---------- */}
+      {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <div className="flex items-center gap-3">
@@ -248,15 +335,16 @@ export const RefereeDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* ---------- Stats ---------- */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* STATS – Now includes Reports count */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <StatCard title="Pending" value={pending} icon="Pending" color="amber" />
         <StatCard title="Accepted" value={accepted} icon="Accepted" color="green" />
         <StatCard title="Rejected" value={rejected} icon="Rejected" color="red" />
+        <StatCard title="Reports" value={reports.length} icon="FileText" color="blue" />
         <StatCard title="Total" value={accepted + rejected} icon="Trophy" color="emerald" />
       </div>
 
-      {/* ---------- Appointments ---------- */}
+      {/* APPOINTMENTS */}
       <div>
         <h3 className="text-2xl font-bold mb-4">Your Appointments</h3>
         {loading ? (
@@ -270,6 +358,8 @@ export const RefereeDashboard: React.FC = () => {
               const status = apt.responses?.[apt._role]?.status || "pending";
               const yourRole = apt._role === "referee" ? "Referee" : "Assistant Referee";
               const yourName = apt._role === "referee" ? apt.refereeName : apt.arName;
+              const matchReport = reports.find((r: any) => r.matchId === apt.id);
+              const hasReport = matchReport?.reports?.length > 0;
 
               return (
                 <Card key={`${apt.id}-${apt._role}`} className="p-5 border shadow-sm hover:shadow-md transition">
@@ -277,7 +367,9 @@ export const RefereeDashboard: React.FC = () => {
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
                         <h3 className="font-semibold text-lg">{apt.homeTeam} vs {apt.awayTeam}</h3>
-                        <Badge variant={status === "accepted" ? "success" : status === "rejected" ? "danger" : "warning"}>{status.toUpperCase()}</Badge>
+                        <Badge variant={status === "accepted" ? "success" : status === "rejected" ? "danger" : "warning"}>
+                          {status.toUpperCase()}
+                        </Badge>
                       </div>
                       <p className="text-gray-600">{apt.date} • {apt.time} • {apt.venue}</p>
                       <p className="text-sm text-gray-600">{apt.gameType?.toUpperCase()} • {apt.game}</p>
@@ -285,22 +377,37 @@ export const RefereeDashboard: React.FC = () => {
                         Your Role: {yourRole} ({yourName})
                       </p>
 
-                      {/* 🔹 Display live audit trail */}
-                      {apt.auditTrail && apt.auditTrail.length > 0 && (
+                      {/* Reports Submitted */}
+                      {hasReport && (
+                        <div className="mt-2 flex gap-1 flex-wrap">
+                          {matchReport.reports.map((r: any) => (
+                            <Badge key={r.id} variant={r.reviewed ? "success" : "warning"} className="text-xs">
+                              {r.type.replace("_", " ")} {r.reviewed ? "Reviewed" : "Pending"}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Audit Trail */}
+                      {((apt.auditTrail?.length > 0 || matchReport?.auditTrail?.length > 0)) && (
                         <div className="mt-3 bg-gray-50 border rounded p-2">
-                          <p className="font-medium text-sm text-gray-700 mb-1">🧾 Audit Trail:</p>
-                          <ul className="text-xs text-gray-600 space-y-1 max-h-24 overflow-y-auto">
-                            {apt.auditTrail.map((log: any, i: number) => (
-                              <li key={i}>
-                                <span className="font-semibold text-gray-800">{log.by}</span> — {log.action}: {log.details}{" "}
-                                <span className="text-gray-400">({new Date(log.timestamp).toLocaleString()})</span>
-                              </li>
-                            ))}
+                          <p className="font-medium text-sm text-gray-700 mb-1">Audit Trail:</p>
+                          <ul className="text-xs text-gray-600 space-y-1 max-h-32 overflow-y-auto">
+                            {[...(apt.auditTrail || []), ...(matchReport?.auditTrail || [])]
+                              .sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp))
+                              .map((log: any, i: number) => (
+                                <li key={i}>
+                                  <span className="font-semibold text-gray-800">{log.by}</span> — {log.action}: {log.details}{" "}
+                                  <span className="text-gray-400">
+                                    ({new Date(log.timestamp).toLocaleString()})
+                                  </span>
+                                </li>
+                              ))}
                           </ul>
                         </div>
                       )}
 
-                      {/* PENDING */}
+                      {/* Actions */}
                       {status === "pending" && (
                         <div className="mt-3 flex gap-2">
                           <Button size="sm" className="bg-green-600 text-white" onClick={() => handleResponse(apt.id, "accepted", apt._role)}>
@@ -312,13 +419,32 @@ export const RefereeDashboard: React.FC = () => {
                         </div>
                       )}
 
-                      {/* ACCEPTED */}
                       {status === "accepted" && (
                         <div className="mt-3 flex gap-2 flex-wrap">
-                          <Button size="sm" className="bg-blue-600 text-white" onClick={() => setActiveReportId(apt.id)}>
-                            Report
-                          </Button>
-                          <Button size="sm" className="bg-emerald-600 text-white" onClick={() => setExpandedResultId(isExpanded ? null : apt.id)}>
+                          {/* Report Button – Always visible after accept */}
+                          {!hasReport ? (
+                            <Button
+                              size="sm"
+                              className="bg-blue-600 text-white"
+                              onClick={() => setShowReportCenter(apt.id)}
+                            >
+                              Submit Report
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setActiveReportId(matchReport.reports[0].id)}
+                            >
+                              View Report
+                            </Button>
+                          )}
+
+                          <Button
+                            size="sm"
+                            className="bg-emerald-600 text-white"
+                            onClick={() => setExpandedResultId(isExpanded ? null : apt.id)}
+                          >
                             {apt.resultSubmitted ? "Edit Result" : "Submit Result"}
                           </Button>
                         </div>
@@ -330,7 +456,7 @@ export const RefereeDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* 🔹 RESULT FORM with audit logging */}
+                  {/* Result Form */}
                   {isExpanded && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 border-t pt-3">
                       <h4 className="font-semibold mb-2">Enter Match Result</h4>
@@ -366,7 +492,6 @@ export const RefereeDashboard: React.FC = () => {
                               updatedAt: serverTimestamp(),
                             };
 
-                            // ✅ Save result to 'results' collection
                             await setDoc(doc(db, "results", apt.id), {
                               ...apt,
                               ...resultData,
@@ -376,7 +501,6 @@ export const RefereeDashboard: React.FC = () => {
                               createdAt: apt.createdAt || serverTimestamp(),
                             }, { merge: true });
 
-                            // ✅ Append audit entry to appointment
                             const aptRef = doc(db, "appointments", apt.id);
                             const auditEntry = {
                               by: currentRefereeEmail,
@@ -411,35 +535,76 @@ export const RefereeDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* ---------- Reports ---------- */}
+      {/* UNIFIED REPORT CENTER MODAL */}
+      {showReportCenter && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
+            <RefereeUnifiedReportCenter
+              appointmentId={showReportCenter}
+              onClose={() => setShowReportCenter(null)}
+              onSuccess={() => {
+                toast({ title: "Report Submitted" });
+                setShowReportCenter(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* MY REPORTS SECTION */}
       <div>
         <h3 className="text-2xl font-bold mb-4">My Reports</h3>
         {reports.length === 0 ? (
           <p className="text-center text-gray-500">No reports yet.</p>
         ) : (
           <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {reports.map((r) => (
-              <Card key={r.id} className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer transition"
-                onClick={() => setActiveReportId(r.id)}>
-                <p className="font-semibold text-gray-900">{r.teams || `${r.matchDetails?.homeTeam} vs ${r.matchDetails?.awayTeam}`}</p>
-                <p className="text-sm text-gray-600">{r.matchDate || r.matchDetails?.date || "No date"}</p>
-                <p className="text-gray-500 text-sm">{r.type?.replaceAll("_", " ")?.toUpperCase()}</p>
+            {reports.map((group: any) => (
+              <Card
+                key={group.matchId}
+                className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer transition"
+                onClick={() => setActiveReportId(group.reports[0]?.id)}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex gap-1 flex-wrap">
+                    {group.reports.map((r: any) => (
+                      <Badge key={r.id} variant={r.reviewed ? "success" : "warning"} className="text-xs">
+                        {r.type.replace("_", " ")} {r.reviewed ? "Reviewed" : "Pending"}
+                      </Badge>
+                    ))}
+                  </div>
+                  {group.reports.some((r: any) => r.reviewed) && (
+                    <span className="text-xs text-gray-500">
+                      Reviewed {group.reports.filter((r: any) => r.reviewed).length}/{group.reports.length}
+                    </span>
+                  )}
+                </div>
+                <p className="font-semibold text-gray-900">{group.matchDisplay}</p>
+                <p className="text-sm text-gray-600">Audit: {group.auditTrail.length} actions</p>
+                <p className="text-gray-500 text-sm">{group.reports.length} report{group.reports.length > 1 ? 's' : ''}</p>
               </Card>
             ))}
           </div>
         )}
       </div>
 
-      {/* ---------- Report Modal ---------- */}
+      {/* REPORT DETAIL + EDIT MODAL */}
       {activeReportId && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40" onClick={() => setActiveReportId(null)}>
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full shadow-lg overflow-y-auto max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-            <RefereeUnifiedReportCenter reportId={activeReportId} onClose={() => setActiveReportId(null)} />
-            <div className="flex justify-end mt-4">
-              <Button variant="outline" onClick={() => setActiveReportId(null)}>
-                Close
-              </Button>
-            </div>
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setActiveReportId(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ReportDetailModal
+              reportId={activeReportId}
+              onClose={() => setActiveReportId(null)}
+              onSave={() => {
+                toast({ title: "Saved", description: "Report updated successfully." });
+                setActiveReportId(null);
+              }}
+            />
           </div>
         </div>
       )}

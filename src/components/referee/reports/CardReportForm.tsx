@@ -1,119 +1,142 @@
+// src/components/referee/reports/CardReportForm.tsx
 import React, { useState } from "react";
-import { getAuth } from "firebase/auth";
-import { db } from "@/lib/firebase";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/components/ui/use-toast";
+import { db } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
+// === MOST COMMON RED CARD OFFENCES (FIFA Laws) ===
+const RED_CARD_LAWS = [
+  "Serious foul play",
+  "Violent conduct",
+  "Spitting at an opponent or any other person",
+  "Denying an obvious goal-scoring opportunity (DOGSO) – handball",
+  "Denying an obvious goal-scoring opportunity (DOGSO) – foul",
+  "Using offensive, insulting or abusive language and/or gestures",
+  "Receiving a second caution in the same match",
+  "Deliberate handball to prevent a goal",
+  "Biting or spitting at someone",
+  "Throwing an object at the ball, opponent or match official",
+  "Entering the field without permission (violent conduct)",
+  "Leaving the field without permission (violent conduct)",
+  "Physical assault on a match official",
+  "Threatening a match official",
+  "Racial abuse or discrimination",
+  "Excessive celebration (removing shirt, covering head)",
+  "Entering the video operation room (VOR)",
+];
+
+interface Match {
+  id: string;
+  homeTeam: string;
+  awayTeam: string;
+  date: string;
+  venue?: string;
+  time?: string;
+}
 
 interface CardReportFormProps {
-  match?: any; // Optional: pass match data from parent if available
+  match: Match;
+  user: any;
   onSuccess?: () => void;
 }
 
-export const CardReportForm: React.FC<CardReportFormProps> = ({ match, onSuccess }) => {
-  const auth = getAuth();
-  const user = auth.currentUser;
-
+export const CardReportForm: React.FC<CardReportFormProps> = ({ match, user, onSuccess }) => {
   const [formData, setFormData] = useState({
-    reporterRole: "Referee",
-    reporterName: user?.displayName || "",
-    reporterEmail: user?.email || "",
-    reporterContact: "",
-    reporterSignature: "",
-
-    competition: match?.gameType || "",
-    homeTeam: match?.homeTeam || "",
-    visitingTeam: match?.awayTeam || "",
     playerFullName: "",
-    playerTeam: "",
-    playerPosition: "",
-    playerNumber: "",
-    venue: match?.venue || match?.venueName || match?.location || "",
-    matchDate: match?.date || "",
+    playerTeam: "Home",
+    minute: "",
     cardType: "Yellow" as "Yellow" | "Red",
-    periodOfGame: "",
-    elapsedTime: "",
-    cautionIndividual: "NO",
-    cautionGeneral: "NO",
-
-    lawInfringements: [] as string[],
-    offenceDescription: "",
+    lawBroken: "",
+    reason: "",
+    reporterSignature: "",
   });
 
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
-  ) => {
-    const { name, value } = e.target;
-    setFormData((p) => ({ ...p, [name]: value }));
-  };
-
-  const toggleLaw = (law: string) => {
-    setFormData((p) => {
-      const exists = p.lawInfringements.includes(law);
-      return {
-        ...p,
-        lawInfringements: exists
-          ? p.lawInfringements.filter((l) => l !== law)
-          : [...p.lawInfringements, law],
-      };
-    });
-  };
+  const auth = getAuth();
+  const currentUser = auth.currentUser;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Required fields
-    if (!formData.matchDate || !formData.playerFullName || !formData.homeTeam) {
-      toast({
-        title: "Missing Required Fields",
-        description: "Please fill in match date, home team, and player name.",
-        variant: "destructive",
-      });
+    if (!formData.playerFullName.trim()) {
+      toast({ title: "Required", description: "Player name is required.", variant: "destructive" });
+      return;
+    }
+    if (!formData.reporterSignature.trim()) {
+      toast({ title: "Required", description: "Signature is required.", variant: "destructive" });
+      return;
+    }
+    if (!currentUser) {
+      toast({ title: "Error", description: "You must be logged in.", variant: "destructive" });
       return;
     }
 
-    if (!formData.reporterSignature.trim()) {
-      toast({
-        title: "Signature Required",
-        description: "Please type your full name as signature.",
-        variant: "destructive",
-      });
+    // Law Broken is required only for Red Cards
+    if (formData.cardType === "Red" && !formData.lawBroken) {
+      toast({ title: "Required", description: "Please select the Law Infringed for Red Card.", variant: "destructive" });
       return;
     }
 
     try {
       setSubmitting(true);
 
-      const payload = {
-        ...formData,
-        reporterId: user?.uid || "",           // ← REQUIRED FOR SECURITY RULES
-        refereeId: user?.uid || "",            // ← Match your rules
-        refereeEmail: user?.email || "",       // ← Recommended
-        matchId: match?.id || null,            // ← Link to appointment
+      const payload: any = {
+        // Core
+        type: "card_report",
+        matchId: match.id,
+        status: "submitted",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+
+        // Ownership
+        refereeId: currentUser.uid,
+        refereeEmail: currentUser.email || "",
+        refereeName: currentUser.displayName || "Unknown Referee",
+
+        // Match Details (auto-filled)
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        matchDate: match.date,
+        venue: match.venue || "",
+        matchTime: match.time || "",
+
+        // Form Fields
+        playerFullName: formData.playerFullName.trim(),
+        playerTeam: formData.playerTeam,
+        cardType: formData.cardType,
+        minute: formData.minute.trim(),
+        lawBroken: formData.cardType === "Red" ? formData.lawBroken : "N/A",
+        reason: formData.reason.trim() || "No reason provided",
+        reporterSignature: formData.reporterSignature.trim(),
+
+        // Dashboard Compatibility
+        timeOfIncident: formData.minute.trim() || "",
+        description: formData.reason.trim() || "No reason provided",
+
         reviewed: false,
-        status: "submitted",
-        type: "card_report",
+        executiveComment: "",
       };
+
+      console.log("Submitting card report:", payload);
 
       await addDoc(collection(db, "reports"), payload);
 
-      setSubmitted(true);
-      toast({
-        title: "Card Report Submitted",
-        description: `${formData.cardType} card report recorded successfully.`,
-      });
-
+      toast({ title: "Success", description: `${formData.cardType} card report submitted.` });
       onSuccess?.();
     } catch (err: any) {
-      console.error("Error submitting card report:", err);
+      console.error("Submit error:", err);
       toast({
-        title: "Submission Failed",
-        description: err.message || "Please try again.",
+        title: "Failed",
+        description: err.message.includes("permission")
+          ? "Check refereeId matches your UID."
+          : err.message,
         variant: "destructive",
       });
     } finally {
@@ -121,283 +144,130 @@ export const CardReportForm: React.FC<CardReportFormProps> = ({ match, onSuccess
     }
   };
 
-  if (submitted) {
-    return (
-      <div className="p-6 border rounded-lg bg-white text-center mt-8">
-        <h2 className="text-2xl font-bold text-emerald-600 mb-2">
-          Report Submitted
-        </h2>
-        <p className="text-gray-700">
-          Your {formData.cardType} card report has been recorded.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="mt-8 border-t pt-6">
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">
-        REFEREE / ASSISTANT REFEREE / TMO REPORT ON TEMPORARY SUSPENSION OR SEND-OFF
-      </h2>
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Card Report</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
 
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-6 bg-white border rounded-lg p-4 shadow-sm"
-      >
-        {/* Card Type */}
-        <div className="flex items-center gap-4">
-          <label className="text-sm font-medium text-gray-700">Card Type:</label>
-          <select
-            name="cardType"
-            value={formData.cardType}
-            onChange={handleChange}
-            className={`border rounded-md px-3 py-2 text-sm font-medium ${
-              formData.cardType === "Red"
-                ? "border-red-500 text-red-600 bg-red-50"
-                : "border-yellow-400 text-yellow-700 bg-yellow-50"
-            }`}
-          >
-            <option value="Yellow">Yellow Card (Temporary Suspension)</option>
-            <option value="Red">Red Card (Send Off)</option>
-          </select>
-        </div>
+          {/* Match Info (Auto-Filled) */}
+          <div className="bg-gray-50 p-4 rounded-lg text-sm space-y-1">
+            <p><strong>Match:</strong> {match.homeTeam} vs {match.awayTeam}</p>
+            <p><strong>Date:</strong> {match.date}</p>
+            <p><strong>Venue:</strong> {match.venue || "—"}</p>
+            <p><strong>Time:</strong> {match.time || "—"}</p>
+            <p><strong>Referee:</strong> {currentUser?.displayName || "Loading..."}</p>
+          </div>
 
-        {/* Competition Info */}
-        <Section title="Competition Details">
-          <Input
-            label="EPRU Competition"
-            name="competition"
-            value={formData.competition}
-            onChange={handleChange}
-            placeholder="e.g. U20 League"
-          />
-          <div className="grid md:grid-cols-2 gap-4">
+          {/* Card Type Dropdown */}
+          <div>
+            <Label>Card Type *</Label>
+            <Select
+              value={formData.cardType}
+              onValueChange={(value: "Yellow" | "Red") => setFormData({ ...formData, cardType: value, lawBroken: "" })}
+            >
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="Select card type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Yellow">Yellow Card</SelectItem>
+                <SelectItem value="Red">Red Card</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Player Name */}
+          <div>
+            <Label>Player Full Name *</Label>
             <Input
-              label="Home Team"
-              name="homeTeam"
-              value={formData.homeTeam}
-              onChange={handleChange}
+              value={formData.playerFullName}
+              onChange={(e) => setFormData({ ...formData, playerFullName: e.target.value })}
+              placeholder="e.g. Xolani Haridi"
               required
             />
-            <Input
-              label="Visiting Team"
-              name="visitingTeam"
-              value={formData.visitingTeam}
-              onChange={handleChange}
-            />
           </div>
-        </Section>
 
-        {/* Player Info */}
-        <Section title="Player Details">
-          <Input
-            label="Player’s Full Name"
-            name="playerFullName"
-            value={formData.playerFullName}
-            onChange={handleChange}
-            required
-          />
-          <div className="grid md:grid-cols-2 gap-4">
-            <Input
-              label="Team"
-              name="playerTeam"
+          {/* Player Team Dropdown */}
+          <div>
+            <Label>Player Team *</Label>
+            <Select
               value={formData.playerTeam}
-              onChange={handleChange}
-              placeholder="Home or Visiting"
-            />
-            <Input
-              label="Playing Position"
-              name="playerPosition"
-              value={formData.playerPosition}
-              onChange={handleChange}
-            />
+              onValueChange={(value: "Home" | "Away") => setFormData({ ...formData, playerTeam: value })}
+            >
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="Select team" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Home">Home – {match.homeTeam}</SelectItem>
+                <SelectItem value="Away">Away – {match.awayTeam}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <Input
-              label="Playing Number"
-              name="playerNumber"
-              value={formData.playerNumber}
-              onChange={handleChange}
-            />
-            <Input
-              label="Venue"
-              name="venue"
-              value={formData.venue}
-              onChange={handleChange}
-            />
-          </div>
-          <Input
-            label="Date of Match"
-            type="date"
-            name="matchDate"
-            value={formData.matchDate}
-            onChange={handleChange}
-            required
-          />
-        </Section>
 
-        {/* Law 9 Infringements */}
-        <Section title="Law 9 Infringements (Select Applicable)">
-          <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-2">
-            {[
-              "1", "2", "3", "4", "5", "6", "7a", "7b", "7c", "8", "9", "10", "11", "12", "13",
-              "14", "15", "16", "17", "18", "19a", "19b", "19c", "19d", "20a", "20b", "20c",
-              "21", "22", "23", "24", "25", "26", "27"
-            ].map((num) => (
-              <button
-                type="button"
-                key={num}
-                onClick={() => toggleLaw(num)}
-                className={`border rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-                  formData.lawInfringements.includes(num)
-                    ? "bg-emerald-600 text-white border-emerald-600"
-                    : "bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100"
-                }`}
+          {/* Minute */}
+          <div>
+            <Label>Minute of Incident</Label>
+            <Input
+              type="text"
+              value={formData.minute}
+              onChange={(e) => setFormData({ ...formData, minute: e.target.value })}
+              placeholder="e.g. 65'"
+            />
+          </div>
+
+          {/* Law Infringed – Only for Red Card */}
+          {formData.cardType === "Red" && (
+            <div>
+              <Label>Law Infringed *</Label>
+              <Select
+                value={formData.lawBroken}
+                onValueChange={(value) => setFormData({ ...formData, lawBroken: value })}
               >
-                {num}
-              </button>
-            ))}
-          </div>
-        </Section>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select the law broken" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60">
+                  {RED_CARD_LAWS.map((law) => (
+                    <SelectItem key={law} value={law}>
+                      {law}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
-        {/* Game Context */}
-        <Section title="Match Context">
-          <Input
-            label="Period of Game"
-            name="periodOfGame"
-            value={formData.periodOfGame}
-            onChange={handleChange}
-            placeholder="e.g. First Half, Second Half, Extra Time"
-          />
-          <Input
-            label="Elapsed Time"
-            name="elapsedTime"
-            value={formData.elapsedTime}
-            onChange={handleChange}
-            placeholder="e.g. 23' or 67:45"
-          />
-        </Section>
-
-        {/* Cautions */}
-        <Section title="Cautions Issued">
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium">Individual Caution?</label>
-            <select
-              name="cautionIndividual"
-              value={formData.cautionIndividual}
-              onChange={handleChange}
-              className="border rounded-md px-3 py-1 text-sm"
-            >
-              <option>YES</option>
-              <option>NO</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium">General Caution?</label>
-            <select
-              name="cautionGeneral"
-              value={formData.cautionGeneral}
-              onChange={handleChange}
-              className="border rounded-md px-3 py-1 text-sm"
-            >
-              <option>YES</option>
-              <option>NO</option>
-            </select>
-          </div>
-        </Section>
-
-        {/* Reporting Official */}
-        <Section title="Reporting Official">
-          <div className="grid md:grid-cols-2 gap-4">
-            <Input
-              label="Role"
-              name="reporterRole"
-              value={formData.reporterRole}
-              onChange={handleChange}
-            />
-            <Input
-              label="Name"
-              name="reporterName"
-              value={formData.reporterName}
-              onChange={handleChange}
-              readOnly
-            />
-            <Input
-              label="Contact Number"
-              name="reporterContact"
-              value={formData.reporterContact}
-              onChange={handleChange}
-            />
-            <Input
-              label="Email"
-              name="reporterEmail"
-              value={formData.reporterEmail}
-              onChange={handleChange}
-              readOnly
+          {/* Reason */}
+          <div>
+            <Label>Reason for Card</Label>
+            <Textarea
+              value={formData.reason}
+              onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+              placeholder="Brief description of the offence..."
+              rows={3}
             />
           </div>
-          <Input
-            label="Signature (Type Full Name)"
-            name="reporterSignature"
-            value={formData.reporterSignature}
-            onChange={handleChange}
-            placeholder="Type your full name to sign"
-            required
-          />
-        </Section>
 
-        {/* Offence Description */}
-        <Section title="DESCRIPTION OF OFFENCE">
-          <textarea
-            name="offenceDescription"
-            rows={6}
-            value={formData.offenceDescription}
-            onChange={handleChange}
-            className="border rounded-lg w-full px-3 py-2 text-sm placeholder-gray-400"
-            placeholder="Provide a clear, factual description of the incident, player actions, and outcome..."
-            required
-          />
-        </Section>
+          {/* Signature */}
+          <div>
+            <Label>Reporter Signature *</Label>
+            <Input
+              value={formData.reporterSignature}
+              onChange={(e) => setFormData({ ...formData, reporterSignature: e.target.value })}
+              placeholder="Type your full name"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">By signing, you confirm this report is accurate.</p>
+          </div>
 
-        {/* Submit Button */}
-        <Button
-          type="submit"
-          className={`w-full text-white font-medium py-3 rounded-lg transition-colors ${
-            formData.cardType === "Red"
-              ? "bg-red-600 hover:bg-red-700"
-              : "bg-yellow-500 hover:bg-yellow-600"
-          }`}
-          disabled={submitting}
-        >
-          {submitting
-            ? "Submitting Report..."
-            : `Submit ${formData.cardType} Card Report`}
-        </Button>
-      </form>
-    </div>
+          {/* Submit */}
+          <Button type="submit" className="w-full" disabled={submitting}>
+            {submitting ? "Submitting..." : `Submit ${formData.cardType} Card Report`}
+          </Button>
+        </CardContent>
+      </Card>
+    </form>
   );
 };
-
-// Reusable Input Component
-const Input = ({
-  label,
-  ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) => (
-  <div className="flex flex-col">
-    <label className="text-xs font-medium text-gray-700 mb-1">{label}</label>
-    <input
-      {...props}
-      className={`border rounded-lg px-3 py-2 text-sm transition-colors focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 ${
-        props.readOnly ? "bg-gray-50" : "bg-white"
-      } ${props.className || ""}`}
-    />
-  </div>
-);
-
-// Reusable Section Component
-const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <div className="space-y-3 p-4 bg-gray-50 rounded-lg border">
-    <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
-    <div className="space-y-3">{children}</div>
-  </div>
-);

@@ -17,8 +17,10 @@ import { Printer, MessageSquare, X } from "lucide-react";
 
 interface Report {
   id: string;
-  referee: string;
-  refereeEmail: string;
+  referee?: string;
+  refereeEmail?: string;
+  coachName?: string;
+  coachEmail?: string;
   type: string;
   lawBroken?: string;
   description: string;
@@ -33,6 +35,7 @@ interface Report {
   createdAt?: any;
   reviewed?: boolean;
   executiveComment?: string;
+  source: "referee" | "coach";
 }
 
 export const ReportsTab: React.FC = () => {
@@ -48,24 +51,30 @@ export const ReportsTab: React.FC = () => {
 
   const printRef = useRef<HTMLDivElement>(null);
 
-  // Real-time listener
+  // Real-time listener for unified reports
   useEffect(() => {
     const q = query(collection(db, "reports"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((docSnap) => {
         const d = docSnap.data();
 
-        const [homeTeam, awayTeam] = d.teams?.includes(" vs ")
-          ? d.teams.split(" vs ")
-          : [d.homeTeam || "Home", d.awayTeam || "Away"];
+        // Detect source
+        const isCoach = !!d.coachId || d.type === "coaching_report";
+        const source = isCoach ? "coach" : "referee";
+
+        // Normalize match
+        const homeTeam = d.homeTeam || (d.teams?.split?.(" vs ")?.[0]) || "Home";
+        const awayTeam = d.awayTeam || (d.teams?.split?.(" vs ")?.[1]) || "Away";
 
         return {
           id: docSnap.id,
-          referee: d.referee || d.refereeName || "Unknown Referee",
-          refereeEmail: d.refereeEmail || "",
-          type: d.type || "general_report",
+          referee: !isCoach ? (d.referee || d.refereeName || "Unknown Referee") : undefined,
+          refereeEmail: !isCoach ? d.refereeEmail || "" : undefined,
+          coachName: isCoach ? d.coachName || "Unknown Coach" : undefined,
+          coachEmail: isCoach ? d.coachEmail || "" : undefined,
+          type: d.type || (isCoach ? "coaching_report" : "general_report"),
           lawBroken: d.lawBroken || d.lawInfringed || d.cardType || "",
-          description: d.description || d.details || d.offenceDescription || "",
+          description: d.description || d.details || d.offenceDescription || d.notes || "",
           timeOfIncident: d.timeOfIncident || d.minute || d.elapsedTime || "",
           matchDetails: {
             homeTeam,
@@ -77,6 +86,7 @@ export const ReportsTab: React.FC = () => {
           createdAt: d.createdAt,
           reviewed: d.reviewed || false,
           executiveComment: d.executiveComment || "",
+          source,
         } as Report;
       });
       setReports(data);
@@ -126,6 +136,8 @@ export const ReportsTab: React.FC = () => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
+    const submittedBy = selectedReport.source === "coach" ? selectedReport.coachName : selectedReport.referee;
+
     const html = `
       <html>
         <head>
@@ -140,11 +152,11 @@ export const ReportsTab: React.FC = () => {
         </head>
         <body>
           <div class="header">
-            <h1>Referee Report</h1>
+            <h1>${selectedReport.source === "coach" ? "Coaching" : "Referee"} Report</h1>
             <h2>${selectedReport.matchDetails?.homeTeam} vs ${selectedReport.matchDetails?.awayTeam}</h2>
           </div>
           <div class="section">
-            <span class="label">Referee:</span> ${selectedReport.referee}
+            <span class="label">${selectedReport.source === "coach" ? "Coach" : "Referee"}:</span> ${submittedBy}
           </div>
           <div class="section">
             <span class="label">Date:</span> ${selectedReport.matchDetails?.date}
@@ -182,10 +194,17 @@ export const ReportsTab: React.FC = () => {
           ? !r.reviewed
           : r.reviewed;
 
+      const searchTerm = filterRef.toLowerCase();
       const matchRef =
         filterRef.trim() === "" ||
-        r.referee.toLowerCase().includes(filterRef.toLowerCase()) ||
-        r.refereeEmail.toLowerCase().includes(filterRef.toLowerCase());
+        (r.source === "referee" && (
+          r.referee?.toLowerCase().includes(searchTerm) ||
+          r.refereeEmail?.toLowerCase().includes(searchTerm)
+        )) ||
+        (r.source === "coach" && (
+          r.coachName?.toLowerCase().includes(searchTerm) ||
+          r.coachEmail?.toLowerCase().includes(searchTerm)
+        ));
 
       const matchType =
         filterType === "" || r.type === filterType;
@@ -195,17 +214,17 @@ export const ReportsTab: React.FC = () => {
   }, [reports, filterStatus, filterRef, filterType]);
 
   // Badge
-  const getTypeBadge = (type: string) => {
-    switch (type) {
-      case "card_report":
-        return <Badge variant="danger">Red Card</Badge>;
-      case "general_report":
-        return <Badge variant="warning">Incident</Badge>;
-      case "coaching_report":
-        return <Badge variant="success">Coaching</Badge>;
-      default:
-        return <Badge variant="outline">General</Badge>;
-    }
+  const getTypeBadge = (type: string, source: "referee" | "coach") => {
+    const base = (() => {
+      switch (type) {
+        case "card_report": return "danger";
+        case "general_report": return "warning";
+        case "coaching_report": return "success";
+        default: return "outline";
+      }
+    })();
+    const label = type === "coaching_report" ? "Coaching" : type.replace(/_/g, " ").toUpperCase();
+    return <Badge variant={base}>{label}</Badge>;
   };
 
   const resetFilters = () => {
@@ -219,9 +238,9 @@ export const ReportsTab: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Referee Reports</h2>
+          <h2 className="text-2xl font-bold text-gray-900">All Reports Dashboard</h2>
           <p className="text-gray-500 text-sm">
-            Click a card to view details, comment, or export as PDF.
+            View referee and coaching reports. Click to review, comment, or export.
           </p>
         </div>
 
@@ -250,10 +269,10 @@ export const ReportsTab: React.FC = () => {
       {/* Filters */}
       <div className="flex flex-col md:flex-row flex-wrap gap-4 items-end">
         <div className="flex flex-col space-y-1 w-full md:w-1/3">
-          <label className="text-sm font-semibold text-gray-600">Filter by Referee</label>
+          <label className="text-sm font-semibold text-gray-600">Search by Name/Email</label>
           <input
             type="text"
-            placeholder="Name or email..."
+            placeholder="Referee or coach..."
             value={filterRef}
             onChange={(e) => setFilterRef(e.target.value)}
             className="border border-gray-300 rounded-lg px-4 py-2"
@@ -268,7 +287,7 @@ export const ReportsTab: React.FC = () => {
             className="border border-gray-300 rounded-lg px-4 py-2"
           >
             <option value="">All Types</option>
-            <option value="card_report">Red Card</option>
+            <option value="card_report">Card Report</option>
             <option value="general_report">Incident</option>
             <option value="coaching_report">Coaching</option>
           </select>
@@ -286,32 +305,37 @@ export const ReportsTab: React.FC = () => {
         <p className="text-center py-8 text-gray-500">No reports found.</p>
       ) : (
         <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredReports.map((report) => (
-            <div
-              key={report.id}
-              className="rounded-lg border bg-white p-4 hover:border-emerald-500 hover:shadow-lg transition-all cursor-pointer select-none"
-              onClick={(e) => {
-                e.stopPropagation();
-                setSelectedReport(report);
-              }}
-            >
-              <div className="flex justify-between items-start mb-2">
-                <div className="flex items-center gap-2">
-                  {getTypeBadge(report.type)}
-                  {report.reviewed && <Badge variant="success">Reviewed</Badge>}
+          {filteredReports.map((report) => {
+            const submittedBy = report.source === "coach" ? report.coachName : report.referee;
+            return (
+              <div
+                key={report.id}
+                className="rounded-lg border bg-white p-4 hover:border-emerald-500 hover:shadow-lg transition-all cursor-pointer select-none"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedReport(report);
+                }}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    {getTypeBadge(report.type, report.source)}
+                    {report.reviewed && <Badge variant="success">Reviewed</Badge>}
+                  </div>
                 </div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {report.matchDetails?.homeTeam || "Unknown"} vs {report.matchDetails?.awayTeam || "Unknown"}
+                </h3>
+                <p className="text-sm text-gray-600">{report.matchDetails?.venue || "Unknown Venue"}</p>
+                <p className="text-sm text-gray-600 mb-2">
+                  {report.matchDetails?.date || "N/A"}{" "}
+                  {report.matchDetails?.time ? `• ${report.matchDetails.time}` : ""}
+                </p>
+                <p className="text-sm text-gray-600">
+                  {report.source === "coach" ? "Coach: " : "Ref: "} {submittedBy}
+                </p>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900">
-                {report.matchDetails?.homeTeam || "Unknown"} vs {report.matchDetails?.awayTeam || "Unknown"}
-              </h3>
-              <p className="text-sm text-gray-600">{report.matchDetails?.venue || "Unknown Venue"}</p>
-              <p className="text-sm text-gray-600 mb-2">
-                {report.matchDetails?.date || "N/A"}{" "}
-                {report.matchDetails?.time ? `• ${report.matchDetails.time}` : ""}
-              </p>
-              <p className="text-sm text-gray-600">{report.referee}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -326,7 +350,9 @@ export const ReportsTab: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-start mb-4">
-              <h3 className="text-2xl font-bold text-emerald-700">Match Report</h3>
+              <h3 className="text-2xl font-bold text-emerald-700">
+                {selectedReport.source === "coach" ? "Coaching" : "Referee"} Report
+              </h3>
               <button
                 onClick={() => setSelectedReport(null)}
                 className="text-gray-500 hover:text-gray-700"
@@ -350,7 +376,7 @@ export const ReportsTab: React.FC = () => {
                 {selectedReport.timeOfIncident && <p><strong>Time:</strong> {selectedReport.timeOfIncident}</p>}
 
                 <div>
-                  <strong>Description:</strong>
+                  <strong>{selectedReport.source === "coach" ? "Notes" : "Description"}:</strong>
                   <p className="mt-1 p-3 bg-gray-50 rounded-lg whitespace-pre-line border">
                     {selectedReport.description}
                   </p>
@@ -367,8 +393,8 @@ export const ReportsTab: React.FC = () => {
               </div>
 
               <div className="mt-4 pt-3 border-t text-sm text-gray-600">
-                <p><strong>Referee:</strong> {selectedReport.referee}</p>
-                <p>{selectedReport.refereeEmail}</p>
+                <p><strong>{selectedReport.source === "coach" ? "Coach" : "Referee"}:</strong> {selectedReport.source === "coach" ? selectedReport.coachName : selectedReport.referee}</p>
+                <p>{selectedReport.source === "coach" ? selectedReport.coachEmail : selectedReport.refereeEmail}</p>
               </div>
             </div>
 

@@ -5,6 +5,9 @@ import {
   deleteDoc,
   doc,
   updateDoc,
+  getDocs,
+  query,
+  where
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getAuth, signOut } from "firebase/auth";
@@ -19,6 +22,7 @@ import { ResultsView } from "./ResultsView";
 import { CoachManagement } from "./CoachManagement";
 import { RefereeManagement } from "./RefereeManagement";
 import { TeamRegistrationForm } from "./TeamRegistrationForm";
+import { ReportsTab } from "./ReportsTab";
 
 interface Appointment {
   id: string;
@@ -132,20 +136,73 @@ export const ExecutiveDashboard: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this appointment?")) return;
-    try {
-      await deleteDoc(doc(db, "appointments", id));
-      toast({ title: "Deleted", description: "Appointment removed." });
-    } catch (err) {
-      console.error(err);
-      toast({
-        title: "Error",
-        description: "Delete failed.",
-        variant: "destructive",
-      });
+
+/**
+ * Deletes an appointment and ALL related data:
+ * - appointments/{id}
+ * - results/{id}
+ * - All reports where matchId === appointmentId
+ * - All auditTrail subcollections inside those reports
+ */
+const handleDelete = async (appointmentId: string) => {
+  if (!window.confirm("Are you sure you want to delete this appointment and ALL its data (results, reports, audit trail)?")) {
+    return;
+  }
+
+  try {
+    // === 1. Delete appointment ===
+    await deleteDoc(doc(db, "appointments", appointmentId));
+
+    // === 2. Delete result (if exists) ===
+    const resultRef = doc(db, "results", appointmentId);
+    const resultSnap = await getDoc(resultRef);
+    if (resultSnap.exists()) {
+      await deleteDoc(resultRef);
     }
-  };
+
+    // === 3. Find & delete all reports for this match ===
+    const reportsQuery = query(
+      collection(db, "reports"),
+      where("matchId", "==", appointmentId)
+    );
+    const reportsSnap = await getDocs(reportsQuery);
+
+    const deletePromises: Promise<any>[] = [];
+
+    reportsSnap.forEach((reportDoc) => {
+      const reportId = reportDoc.id;
+
+      // Delete main report
+      deletePromises.push(deleteDoc(doc(db, "reports", reportId)));
+
+      // Delete auditTrail subcollection
+      const auditQuery = query(collection(db, "reports", reportId, "auditTrail"));
+      deletePromises.push(
+        getDocs(auditQuery).then((auditSnap) => {
+          const batchDeletes = auditSnap.docs.map((auditDoc) =>
+            deleteDoc(doc(db, "reports", reportId, "auditTrail", auditDoc.id))
+          );
+          return Promise.all(batchDeletes);
+        })
+      );
+    });
+
+    // Execute all deletions
+    await Promise.all(deletePromises);
+
+    toast({
+      title: "Deleted",
+      description: "Appointment, result, and all reports removed.",
+    });
+  } catch (err: any) {
+    console.error("Delete cascade failed:", err);
+    toast({
+      title: "Error",
+      description: err.message || "Failed to delete appointment and related data.",
+      variant: "destructive",
+    });
+  }
+};
 
   const handleEditToggle = (apt: Appointment) => {
     if (activeEditId === apt.id) {
@@ -422,7 +479,7 @@ export const ExecutiveDashboard: React.FC = () => {
         {/* 🧾 Reports */}
         <TabsContent value="reports">
           {/* Existing reports logic unchanged */}
-          {/* ... */}
+          <ReportsTab/>
         </TabsContent>
 
         {/* 👨‍🏫 Coaches */}
