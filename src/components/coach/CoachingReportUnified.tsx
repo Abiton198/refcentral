@@ -1,15 +1,32 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { getAuth } from "firebase/auth";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { Button } from "@/components/ui/Button";
 
-/**
- * Unified Coaching Report (Junior / Senior)
- * Saves reports in Firestore collection: "coachReports"
- * Field: reportType = "junior_coaching" | "senior_coaching"
- */
-export const CoachingReportUnified: React.FC = () => {
+interface PrefillData {
+  homeTeam: string;
+  awayTeam: string;
+  date: string;
+  time: string;
+  venue: string;
+  referee: string;
+  matchId: string;
+}
+
+interface CoachingReportUnifiedProps {
+  coachName: string;
+  coachEmail: string;
+  prefill?: PrefillData;
+  onSuccess?: () => void;
+}
+
+export const CoachingReportUnified: React.FC<CoachingReportUnifiedProps> = ({
+  coachName,
+  coachEmail,
+  prefill,
+  onSuccess,
+}) => {
   const auth = getAuth();
   const user = auth.currentUser;
 
@@ -26,9 +43,9 @@ export const CoachingReportUnified: React.FC = () => {
     matchDate: "",
     venue: "",
     level: "",
-    coachName: "",
+    coachName: coachName || "",
 
-    // shared fields
+    // GAME STATS
     penalties: "",
     breakdownPens: "",
     lineoutPens: "",
@@ -37,15 +54,35 @@ export const CoachingReportUnified: React.FC = () => {
     foulPlayPens: "",
     generalPlayPens: "",
 
+    // COACHING NOTES
     improvementAreas1: "",
     improvementAreas2: "",
     improvementAreas3: "",
     strengthsNotes: "",
+
+    // HIDDEN
+    matchId: "",
   });
 
-  const [extra, setExtra] = useState<any>({}); // holds role-specific feedbacks
+  const [extra, setExtra] = useState<any>({}); // role-specific feedback
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  // Auto-fill from prefill
+  useEffect(() => {
+    if (prefill) {
+      const matchStr = `${prefill.homeTeam} vs ${prefill.awayTeam}`;
+      setFormData((prev: any) => ({
+        ...prev,
+        match: matchStr,
+        matchDate: prefill.date,
+        venue: prefill.venue,
+        coachName: coachName,
+        refereeName: prefill.referee || user?.displayName || "",
+        matchId: prefill.matchId,
+      }));
+    }
+  }, [prefill, coachName, user]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -59,26 +96,58 @@ export const CoachingReportUnified: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return alert("Please sign in first.");
-    if (!formData.match || !formData.matchDate || !formData.venue)
-      return alert("Please complete Match, Date, and Venue.");
-    if (!formData.coachName) return alert("Please enter Coach’s Name.");
+    if (!user) return alert("Please sign in.");
+    if (!formData.coachName) return alert("Enter coach name.");
 
     try {
       setSubmitting(true);
 
+      // Extract teams from match string if not saved separately
+      const teams = formData.match.includes(" vs ")
+        ? formData.match.split(" vs ")
+        : [formData.match, ""];
+
       const payload = {
-        ...formData,
+        // CORE INFO
+        coachName: formData.coachName,
+        coachEmail: coachEmail,
+        refereeName: formData.refereeName,
+        refereeEmail: formData.refereeEmail,
+        refereeId: formData.refereeId,
+        matchId: formData.matchId,
+        reportType,
+
+        // MATCH DETAILS (SAVED SEPARATELY)
+        homeTeam: prefill?.homeTeam || teams[0] || "",
+        awayTeam: prefill?.awayTeam || teams[1] || "",
+        venue: formData.venue,
+        matchDate: formData.matchDate,
+        matchTime: prefill?.time || "",
+        level: formData.level,
+
+        // FULL FEEDBACK (extra)
         ...extra,
+
+        // GAME STATS
+        penalties: formData.penalties || 0,
+        breakdownPens: formData.breakdownPens || 0,
+        lineoutPens: formData.lineoutPens || 0,
+        scrumPens: formData.scrumPens || 0,
+        spacePens: formData.spacePens || 0,
+        foulPlayPens: formData.foulPlayPens || 0,
+        generalPlayPens: formData.generalPlayPens || 0,
+
+        // COACHING IMPROVEMENT AREAS
         improvementAreas: [
           formData.improvementAreas1,
           formData.improvementAreas2,
           formData.improvementAreas3,
         ].filter(Boolean),
-        reportType,
-        refereeId: formData.refereeId,
-        refereeName: formData.refereeName,
-        refereeEmail: formData.refereeEmail,
+
+        // STRENGTHS
+        strengthsNotes: formData.strengthsNotes || "",
+
+        // METADATA
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         reviewed: false,
@@ -86,11 +155,11 @@ export const CoachingReportUnified: React.FC = () => {
 
       await addDoc(collection(db, "coachReports"), payload);
       setSubmitted(true);
-      setSubmitting(false);
-      alert("✅ Report submitted successfully.");
-    } catch (err) {
-      console.error("Error saving report:", err);
-      alert("❌ Could not submit report.");
+      onSuccess?.();
+    } catch (err: any) {
+      console.error("Save error:", err);
+      alert(`Error: ${err.message}`);
+    } finally {
       setSubmitting(false);
     }
   };
@@ -99,7 +168,7 @@ export const CoachingReportUnified: React.FC = () => {
     return (
       <div className="p-6 border rounded-lg bg-white text-center mt-8">
         <h2 className="text-2xl font-bold text-emerald-600 mb-2">
-          ✅ Report Submitted
+          Report Submitted
         </h2>
         <p className="text-gray-700">
           Your {reportType === "junior_coaching" ? "Junior" : "Senior"} coaching
@@ -112,7 +181,7 @@ export const CoachingReportUnified: React.FC = () => {
     <div className="mt-8 border-t pt-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-bold text-gray-900">
-          📋 Referee’s Coaching Report
+          Referee’s Coaching Report
         </h2>
         <select
           value={reportType}
@@ -133,28 +202,9 @@ export const CoachingReportUnified: React.FC = () => {
         {/* BASIC INFO */}
         <div className="grid md:grid-cols-2 gap-4">
           <Input label="Referee" value={formData.refereeName} disabled />
-          <Input
-            label="Match"
-            name="match"
-            value={formData.match}
-            onChange={handleChange}
-            required
-          />
-          <Input
-            label="Date"
-            type="date"
-            name="matchDate"
-            value={formData.matchDate}
-            onChange={handleChange}
-            required
-          />
-          <Input
-            label="Venue"
-            name="venue"
-            value={formData.venue}
-            onChange={handleChange}
-            required
-          />
+          <Input label="Match" value={formData.match} disabled />
+          <Input label="Date" type="date" value={formData.matchDate} disabled />
+          <Input label="Venue" value={formData.venue} disabled />
           <Input
             label="Level"
             name="level"
@@ -341,18 +391,19 @@ export const CoachingReportUnified: React.FC = () => {
 };
 
 // --- Reusable subcomponents ---
-
 const Input = ({
   label,
+  disabled,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & { label?: string }) => (
+}: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; disabled?: boolean }) => (
   <div className="flex flex-col">
     {label && <label className="text-xs font-medium text-gray-700">{label}</label>}
     <input
       {...props}
+      disabled={disabled}
       className={`border rounded-lg px-3 py-2 mt-1 text-sm ${
-        props.className || ""
-      }`}
+        disabled ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""
+      } ${props.className || ""}`}
     />
   </div>
 );
@@ -368,9 +419,7 @@ const TextArea = ({
     <textarea
       {...props}
       rows={2}
-      className={`border rounded-lg w-full px-3 py-2 text-sm mt-1 ${
-        props.className || ""
-      }`}
+      className={`border rounded-lg w-full px-3 py-2 text-sm mt-1 ${props.className || ""}`}
     />
   </div>
 );

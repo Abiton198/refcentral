@@ -1,304 +1,507 @@
-import React, { useEffect, useState } from 'react';
-import { Card, StatCard } from '../ui/Card';
-import { Button } from '../ui/Button';
-import { db } from '../../lib/firebase';
+import React, { useEffect, useState } from "react";
+import { Card, StatCard } from "../ui/Card";
+import { Button } from "../ui/Button";
+import { Avatar } from "../ui/avatar";
+import { Badge } from "../ui/Badge";
+import { db, auth } from "../../lib/firebase";
 import {
-  addDoc,
-  collection,
   doc,
   getDoc,
   onSnapshot,
   query,
-  serverTimestamp,
   where,
-} from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+  collection,
+  updateDoc,
+} from "firebase/firestore";
+import { CoachingReportUnified } from './CoachingReportUnified';
+import { motion, AnimatePresence } from "framer-motion";
+
+interface Report {
+  id: string;
+  homeTeam: string;
+  awayTeam: string;
+  matchDate: string;
+  reportType: string;
+  content: string;
+  playerName?: string;
+  minute?: string;
+  lawInfringed?: string;
+  subject?: string;
+  createdAt: any;
+  reviewed?: boolean;
+  reviewedBy?: string;
+  reviewedAt?: any;
+}
+
+interface CoachAppointment {
+  id: string;
+  homeTeam: string;
+  awayTeam: string;
+  date: string;
+  time: string;
+  venue: string;
+  appointedBy: string;
+  matchId: string;
+  createdAt: any;
+  auditTrail?: Array<{
+    action: string;
+    by: string;
+    timestamp: any;
+  }>;
+}
+
+interface AuditEntry {
+  id: string;
+  action: string;
+  by: string;
+  timestamp: any;
+}
 
 export const CoachDashboard: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'reports' | 'profile'>('reports');
-  const [showForm, setShowForm] = useState(false);
-  const [reports, setReports] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"reports" | "profile" | "appointments">("appointments");
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [selectedMatch, setSelectedMatch] = useState<any>(null);
+  const [reports, setReports] = useState<Report[]>([]);
+  const [appointments, setAppointments] = useState<(CoachAppointment & { referee?: string })[]>([]);
   const [profile, setProfile] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
+  const [editData, setEditData] = useState<any>({});
   const [loading, setLoading] = useState(true);
+  const [auditTrail, setAuditTrail] = useState<AuditEntry[]>([]);
+  const [selectedApptId, setSelectedApptId] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState({
-    matchDate: '',
-    homeTeam: '',
-    awayTeam: '',
-    reportType: 'performance',
-    content: '',
-    playerName: '',
-    minute: '',
-    lawInfringed: '',
-    subject: '',
-  });
-
-  const auth = getAuth();
   const user = auth.currentUser;
-  const coachName = user?.displayName || 'Coach';
-  const coachEmail = user?.email || 'unknown@example.com';
+  const coachName = user?.displayName || "Coach";
+  const coachEmail = user?.email || "";
+  const photoURL = user?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(coachName)}&background=10b981&color=fff`;
 
-  // ✅ Load coach profile
+  // Load Profile
   useEffect(() => {
     if (!user?.uid) return;
-    const fetchProfile = async () => {
-      const userRef = doc(db, 'users', user.uid);
-      const snap = await getDoc(userRef);
+    const unsub = onSnapshot(doc(db, "coaches", user.uid), (snap) => {
       if (snap.exists()) {
-        setProfile(snap.data());
+        const data = snap.data();
+        setProfile(data);
+        setEditData(data);
       }
-    };
-    fetchProfile();
+    });
+    return () => unsub();
   }, [user?.uid]);
 
-  // ✅ Fetch coach reports in real-time
+  // Load Reports
   useEffect(() => {
     if (!coachEmail) return;
-    const q = query(collection(db, 'coachReports'), where('coachEmail', '==', coachEmail));
+
+    const q = query(
+      collection(db, "coachReports"),
+      where("coachEmail", "==", coachEmail)
+    );
+
     const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
-      }));
+      })) as Report[];
       setReports(data);
       setLoading(false);
     });
+
     return () => unsub();
   }, [coachEmail]);
 
-  // ✅ Submit a new report to Firestore
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await addDoc(collection(db, 'coachReports'), {
-        coachName,
-        coachEmail,
-        matchDate: formData.matchDate,
-        homeTeam: formData.homeTeam,
-        awayTeam: formData.awayTeam,
-        reportType: formData.reportType,
-        content: formData.content,
-        playerName: formData.reportType === 'redCard' ? formData.playerName : '',
-        minute: formData.reportType === 'redCard' ? formData.minute : '',
-        lawInfringed: formData.reportType === 'redCard' ? formData.lawInfringed : '',
-        subject: formData.reportType === 'custom' ? formData.subject : '',
-        createdAt: serverTimestamp(),
-      });
+  // Load Coach Appointments + Referee + Match Details
+  useEffect(() => {
+    if (!user?.uid) return;
 
-      alert('✅ Report submitted successfully!');
-      setShowForm(false);
-      setFormData({
-        matchDate: '',
-        homeTeam: '',
-        awayTeam: '',
-        reportType: 'performance',
-        content: '',
-        playerName: '',
-        minute: '',
-        lawInfringed: '',
-        subject: '',
-      });
-    } catch (error) {
-      console.error('Error submitting report:', error);
-      alert('❌ Failed to submit report. Try again.');
+    const q = query(
+      collection(db, "coachAppointments"),
+      where("coachId", "==", user.uid)
+    );
+
+    const unsub = onSnapshot(q, async (snapshot) => {
+      const appts = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as CoachAppointment[];
+
+      const enriched = await Promise.all(
+        appts.map(async (appt) => {
+          if (!appt.matchId) return { ...appt, referee: "—" };
+
+          const matchDoc = await getDoc(doc(db, "appointments", appt.matchId));
+          if (!matchDoc.exists()) return { ...appt, referee: "—" };
+
+          const data = matchDoc.data();
+          const referee = data.referee || data.ar || "—";
+          return { ...appt, referee };
+        })
+      );
+
+      setAppointments(enriched);
+    });
+
+    return () => unsub();
+  }, [user?.uid]);
+
+  // Open Report Form with Pre-filled Data
+  const openReportForm = (appt: CoachAppointment & { referee?: string }) => {
+    setSelectedMatch({
+      homeTeam: appt.homeTeam,
+      awayTeam: appt.awayTeam,
+      date: appt.date,
+      time: appt.time,
+      venue: appt.venue,
+      referee: appt.referee || "—",
+      matchId: appt.matchId,
+    });
+    setShowReportForm(true);
+  };
+
+  // Close Form
+  const closeReportForm = () => {
+    setShowReportForm(false);
+    setSelectedMatch(null);
+  };
+
+  // Load Audit Trail
+  const loadAuditTrail = (apptId: string) => {
+    if (selectedApptId === apptId) {
+      setSelectedApptId(null);
+      setAuditTrail([]);
+      return;
+    }
+
+    const trailRef = collection(db, "coachAppointments", apptId, "auditTrail");
+    const unsub = onSnapshot(trailRef, (snap) => {
+      const trail = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      })) as AuditEntry[];
+      setAuditTrail(trail);
+    });
+    setSelectedApptId(apptId);
+    return () => unsub();
+  };
+
+  // Save Profile
+  const handleSaveProfile = async () => {
+    if (!user?.uid) return;
+    try {
+      await updateDoc(doc(db, "coaches", user.uid), editData);
+      await updateDoc(doc(db, "users", user.uid), editData);
+      setEditing(false);
+    } catch (err) {
+      alert("Failed to save profile.");
     }
   };
 
-  // ✅ Common Rugby Laws for red card report
-  const rugbyLaws = [
-    { number: 'Law 9.11', title: 'Players must not do anything reckless or dangerous to others' },
-    { number: 'Law 9.12', title: 'No physical or verbal abuse' },
-    { number: 'Law 9.13', title: 'Dangerous tackle of an opponent' },
-    { number: 'Law 9.16', title: 'Charging without attempting to grasp' },
-    { number: 'Law 9.17', title: 'Tackling a player in the air' },
-    { number: 'Law 9.20', title: 'Dangerous play in a ruck or maul' },
-    { number: 'Law 9.25', title: 'Unsporting conduct' },
-    { number: 'Law 9.28', title: 'Repeated infringements' },
-  ];
+  // Stats
+  const totalReports = reports.length;
+  const thisMonthReports = reports.filter((r) => {
+    const date = r.createdAt?.toDate();
+    if (!date) return false;
+    const now = new Date();
+    return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  }).length;
+  const reviewedReports = reports.filter((r) => r.reviewed).length;
+  const pendingReview = totalReports - reviewedReports;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold text-gray-900">Welcome, {coachName}</h2>
-        <div className="flex gap-2">
-          <Button
-            variant={activeTab === 'reports' ? 'default' : 'secondary'}
-            onClick={() => setActiveTab('reports')}
-          >
-            Reports
-          </Button>
-          <Button
-            variant={activeTab === 'profile' ? 'default' : 'secondary'}
-            onClick={() => setActiveTab('profile')}
-          >
-            Profile
-          </Button>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
 
-      {activeTab === 'profile' ? (
-        // ✅ Profile Tab
-        <Card>
-          <h3 className="text-2xl font-bold mb-4">Coach Profile</h3>
-          {profile ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-700">
-              <p><strong>Name:</strong> {profile.name} {profile.surname}</p>
-              <p><strong>Club:</strong> {profile.club}</p>
-              <p><strong>Contact:</strong> {profile.contact}</p>
-              <p><strong>Gender:</strong> {profile.gender}</p>
-              <p><strong>Role in Club:</strong> {profile.roleInClub}</p>
-              <p><strong>Email:</strong> {coachEmail}</p>
-              <p><strong>Status:</strong> {profile.approved ? '✅ Approved' : '⏳ Pending Approval'}</p>
+        {/* Header */}
+        <div className="bg-white rounded-2xl shadow-sm p-6 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-4">
+            <Avatar src={photoURL} size="lg" />
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">{coachName}</h2>
+              <p className="text-sm text-gray-600">{coachEmail}</p>
             </div>
-          ) : (
-            <p className="text-gray-500">Loading profile...</p>
-          )}
-        </Card>
-      ) : (
-        <>
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <StatCard title="Reports Submitted" value={reports.length} icon="📝" color="emerald" />
-            <StatCard title="This Month" value="3" icon="📅" color="amber" />
-            <StatCard title="Pending Review" value="1" icon="⏳" color="blue" />
           </div>
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              variant={activeTab === "appointments" ? "default" : "outline"}
+              onClick={() => setActiveTab("appointments")}
+            >
+              Appointments
+            </Button>
+            <Button
+              variant={activeTab === "reports" ? "default" : "outline"}
+              onClick={() => setActiveTab("reports")}
+            >
+              Reports
+            </Button>
+            <Button
+              variant={activeTab === "profile" ? "default" : "outline"}
+              onClick={() => setActiveTab("profile")}
+            >
+              Profile
+            </Button>
+          </div>
+        </div>
 
-          {/* Report Form */}
-          {showForm ? (
-            <Card>
-              <h3 className="text-xl font-bold mb-4">Submit Match Report</h3>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <input
-                  type="date"
-                  value={formData.matchDate}
-                  onChange={(e) => setFormData({ ...formData, matchDate: e.target.value })}
-                  className="w-full border rounded-lg px-4 py-2"
-                  required
-                />
-
-                <input
-                  type="text"
-                  placeholder="Home Team"
-                  value={formData.homeTeam}
-                  onChange={(e) => setFormData({ ...formData, homeTeam: e.target.value })}
-                  className="w-full border rounded-lg px-4 py-2"
-                  required
-                />
-
-                <input
-                  type="text"
-                  placeholder="Away Team"
-                  value={formData.awayTeam}
-                  onChange={(e) => setFormData({ ...formData, awayTeam: e.target.value })}
-                  className="w-full border rounded-lg px-4 py-2"
-                  required
-                />
-
-                <select
-                  value={formData.reportType}
-                  onChange={(e) => setFormData({ ...formData, reportType: e.target.value })}
-                  className="w-full border rounded-lg px-4 py-2"
-                >
-                  <option value="performance">Performance Feedback</option>
-                  <option value="incident">Incident Report</option>
-                  <option value="redCard">Red Card Report</option>
-                  <option value="custom">Custom Report</option>
-                </select>
-
-                {formData.reportType === 'redCard' && (
-                  <>
-                    <input
-                      type="text"
-                      placeholder="Player Name"
-                      value={formData.playerName}
-                      onChange={(e) => setFormData({ ...formData, playerName: e.target.value })}
-                      className="w-full border rounded-lg px-4 py-2"
-                      required
-                    />
-                    <input
-                      type="number"
-                      placeholder="Minute of Offense"
-                      value={formData.minute}
-                      onChange={(e) => setFormData({ ...formData, minute: e.target.value })}
-                      className="w-full border rounded-lg px-4 py-2"
-                      required
-                    />
-                    <select
-                      value={formData.lawInfringed}
-                      onChange={(e) => setFormData({ ...formData, lawInfringed: e.target.value })}
-                      className="w-full border rounded-lg px-4 py-2"
-                      required
-                    >
-                      <option value="">Select Law of Rugby Infringed</option>
-                      {rugbyLaws.map((law) => (
-                        <option key={law.number} value={law.number}>
-                          {law.number} — {law.title}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-
-                {formData.reportType === 'custom' && (
-                  <input
-                    type="text"
-                    placeholder="Report Subject / Topic"
-                    value={formData.subject}
-                    onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                    className="w-full border rounded-lg px-4 py-2"
-                    required
-                  />
-                )}
-
-                <textarea
-                  placeholder="Report details..."
-                  value={formData.content}
-                  onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                  className="w-full border rounded-lg px-4 py-2 h-32"
-                  required
-                />
-
-                <Button type="submit" className="w-full">Submit Report</Button>
-              </form>
-            </Card>
-          ) : (
-            <Button onClick={() => setShowForm(true)}>+ Submit Report</Button>
-          )}
-
-          {/* Reports List */}
-          <div>
-            <h3 className="text-2xl font-bold mb-4">Your Reports</h3>
-            {loading ? (
-              <Card><p className="text-center text-gray-500">Loading reports...</p></Card>
-            ) : reports.length === 0 ? (
-              <Card><p className="text-center text-gray-500">No reports submitted yet</p></Card>
+        {/* APPOINTMENTS TAB */}
+        {activeTab === "appointments" && (
+          <div className="space-y-6">
+            <h3 className="text-2xl font-bold">Your Match Appointments</h3>
+            {appointments.length === 0 ? (
+              <Card className="p-8 text-center">
+                <p className="text-gray-500">No appointments yet. Check back after the executive assigns you.</p>
+              </Card>
             ) : (
               <div className="space-y-4">
-                {reports.map((report) => (
-                  <Card key={report.id}>
-                    <h4 className="font-bold text-gray-900">
-                      {report.homeTeam} vs {report.awayTeam}
-                    </h4>
-                    <p className="text-sm text-gray-600">
-                      {report.matchDate} • {report.reportType}
-                    </p>
-                    {report.reportType === 'redCard' && (
-                      <p className="text-sm text-red-600 mt-1">
-                        🟥 {report.playerName} — {report.lawInfringed} (Minute {report.minute})
-                      </p>
+                {appointments.map((appt) => (
+                  <Card
+                    key={appt.id}
+                    className="p-5 hover:shadow-md transition"
+                  >
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1 cursor-pointer" onClick={() => loadAuditTrail(appt.id)}>
+                        <h4 className="font-bold text-lg text-gray-900">
+                          {appt.homeTeam} vs {appt.awayTeam}
+                        </h4>
+                        <p className="text-sm text-gray-600">
+                          {appt.date} • {appt.time} • {appt.venue}
+                        </p>
+                        <p className="text-sm text-gray-700 mt-1">
+                          <strong>Referee:</strong> {appt.referee}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Appointed by: <span className="font-medium">{appt.appointedBy}</span>
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-2 items-end">
+                        <Badge variant="emerald">Active</Badge>
+                        <Button
+                          size="sm"
+                          onClick={() => openReportForm(appt)}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          Submit Report
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Audit Trail */}
+                    {selectedApptId === appt.id && auditTrail.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <p className="text-xs font-medium text-gray-700 mb-2">Audit Trail</p>
+                        {auditTrail.map((entry) => (
+                          <p key={entry.id} className="text-xs text-gray-500">
+                            {entry.action} by <span className="font-medium">{entry.by}</span> •{" "}
+                            {entry.timestamp?.toDate
+                              ? new Date(entry.timestamp.toDate()).toLocaleString()
+                              : new Date(entry.timestamp).toLocaleString()}
+                          </p>
+                        ))}
+                      </div>
                     )}
-                    {report.reportType === 'custom' && (
-                      <p className="font-semibold text-gray-800">📝 {report.subject}</p>
-                    )}
-                    <p className="mt-2 text-gray-700">{report.content}</p>
                   </Card>
                 ))}
               </div>
             )}
           </div>
-        </>
-      )}
+        )}
+
+        {/* REPORT FORM (Pre-filled) */}
+        <AnimatePresence>
+          {showReportForm && selectedMatch && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+              onClick={closeReportForm}
+            >
+              <Card
+                className="w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold">Submit Match Report</h3>
+                  <Button variant="ghost" size="sm" onClick={closeReportForm}>
+                    Close
+                  </Button>
+                </div>
+
+                <CoachingReportUnified
+                  coachName={coachName}
+                  coachEmail={coachEmail}
+                  prefill={{
+                    homeTeam: selectedMatch.homeTeam,
+                    awayTeam: selectedMatch.awayTeam,
+                    date: selectedMatch.date,
+                    time: selectedMatch.time,
+                    venue: selectedMatch.venue,
+                    referee: selectedMatch.referee,
+                    matchId: selectedMatch.matchId,
+                  }}
+                  onSuccess={() => {
+                    closeReportForm();
+                  }}
+                />
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* REPORTS TAB */}
+        {activeTab === "reports" && (
+          <>
+            {/* STATS */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard title="Total Reports" value={totalReports} icon="Document" color="emerald" />
+              <StatCard title="This Month" value={thisMonthReports} icon="Calendar" color="amber" />
+              <StatCard title="Reviewed" value={reviewedReports} icon="Check" color="blue" />
+              <StatCard title="Pending" value={pendingReview} icon="Clock" color="purple" />
+            </div>
+
+           {/* Reports List */}
+<div className="space-y-4">
+  <h3 className="text-2xl font-bold">Your Reports</h3>
+  {loading ? (
+    <Card><p className="text-center py-8 text-gray-500">Loading...</p></Card>
+  ) : reports.length === 0 ? (
+    <Card><p className="text-center py-8 text-gray-500">No reports yet. Submit from Appointments!</p></Card>
+  ) : (
+    <div className="space-y-4">
+      {reports.map((report) => (
+        <Card key={report.id} className="p-5 hover:shadow-lg transition">
+          <div className="flex justify-between items-start gap-4">
+            <div className="flex-1">
+              {/* Match & Teams */}
+              <h4 className="font-bold text-lg text-gray-900">
+                {report.homeTeam} vs {report.awayTeam}
+              </h4>
+
+              {/* Date, Venue, Referee */}
+              <div className="text-sm text-gray-600 space-y-1 mt-1">
+                <p>
+                  {report.matchDate && new Date(report.matchDate).toLocaleDateString()} • {report.venue}
+                </p>
+                <p>
+                  <strong>Referee:</strong> {report.referee || "—"}
+                </p>
+              </div>
+
+              {/* Report Type & Status */}
+              <p className="text-xs text-gray-500 mt-2">
+                {report.reportType === "junior_coaching" ? "Junior" : "Senior"} Coaching Report •{" "}
+                {new Date(report.createdAt?.toDate()).toLocaleDateString()}
+              </p>
+
+              {report.reviewed && (
+                <p className="text-xs text-emerald-600 mt-1">
+                  Reviewed by {report.reviewedBy}
+                </p>
+              )}
+            </div>
+
+            {/* Status Badge */}
+            <div className="text-right">
+              {report.reviewed ? (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                  Reviewed
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                  Pending
+                </span>
+              )}
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  )}
+</div>
+          </>
+        )}
+
+        {/* PROFILE TAB */}
+        {activeTab === "profile" && (
+          <Card className="p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-bold">Coach Profile</h3>
+              <Button
+                variant={editing ? "danger" : "outline"}
+                size="sm"
+                onClick={() => editing ? setEditing(false) : setEditing(true)}
+              >
+                {editing ? "Cancel" : "Edit"}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {editing ? (
+                <>
+                  <input
+                    value={editData.firstName || ""}
+                    onChange={(e) => setEditData({ ...editData, firstName: e.target.value })}
+                    placeholder="First Name"
+                    className="input"
+                  />
+                  <input
+                    value={editData.surname || ""}
+                    onChange={(e) => setEditData({ ...editData, surname: e.target.value })}
+                    placeholder="Surname"
+                    className="input"
+                  />
+                  <input
+                    value={editData.mobileNumber || ""}
+                    onChange={(e) => setEditData({ ...editData, mobileNumber: e.target.value })}
+                    placeholder="Mobile"
+                    className="input"
+                  />
+                  <input
+                    value={editData.city || ""}
+                    onChange={(e) => setEditData({ ...editData, city: e.target.value })}
+                    placeholder="City"
+                    className="input"
+                  />
+                  <Button onClick={handleSaveProfile} className="col-span-2">
+                    Save Changes
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <p className="font-medium text-gray-700">Name</p>
+                    <p className="text-lg">{profile?.firstName} {profile?.surname}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Email</p>
+                    <p className="text-lg">{coachEmail}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Mobile</p>
+                    <p className="text-lg">{profile?.mobileNumber || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">City</p>
+                    <p className="text-lg">{profile?.city || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Bank</p>
+                    <p className="text-lg">{profile?.bankName || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Status</p>
+                    <p className="text-lg">
+                      {profile?.approved ? (
+                        <span className="text-emerald-600">Approved</span>
+                      ) : (
+                        <span className="text-amber-600">Pending</span>
+                      )}
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 };
