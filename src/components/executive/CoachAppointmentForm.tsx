@@ -12,6 +12,7 @@ import {
   query,
   where,
   serverTimestamp,
+  arrayUnion,
 } from "firebase/firestore";
 import { toast } from "@/components/ui/use-toast";
 
@@ -32,11 +33,11 @@ interface Coach {
   email: string;
 }
 
-interface CoachAppointment {
+interface Appointment {
   id: string;
-  coachId: string;
-  coachName: string;
-  coachEmail: string;
+  coachId?: string;
+  coachName?: string;
+  coachEmail?: string;
   matchId: string;
   homeTeam: string;
   awayTeam: string;
@@ -44,6 +45,7 @@ interface CoachAppointment {
   time: string;
   venue: string;
   appointedBy: string;
+  status?: "pending" | "accepted" | "rejected";
   createdAt?: any;
   updatedAt?: any;
   auditTrail?: Array<{
@@ -54,20 +56,24 @@ interface CoachAppointment {
   }>;
 }
 
+// Props from ExecutiveDashboard
 interface CoachAppointmentFormProps {
   showForm: boolean;
   setShowForm: (show: boolean) => void;
+  appointments: Appointment[];
+  setAppointments: React.Dispatch<React.SetStateAction<Appointment[]>>;
   onSuccess?: () => void;
 }
 
 export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
   showForm,
   setShowForm,
+  appointments,
+  setAppointments,
   onSuccess,
 }) => {
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [refereeMatches, setRefereeMatches] = useState<Match[]>([]);
-  const [appointments, setAppointments] = useState<CoachAppointment[]>([]);
   const [loading, setLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentEditId, setCurrentEditId] = useState<string | null>(null);
@@ -85,7 +91,7 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
   const user = auth.currentUser;
   const appointedBy = user?.displayName || user?.email?.split("@")[0] || "Executive";
 
-  // Fetch approved coaches
+  // === Fetch Approved Coaches ===
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, "coaches"), where("approved", "==", true)),
@@ -100,7 +106,7 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
     return () => unsub();
   }, []);
 
-  // Fetch only referee-appointed matches
+  // === Fetch Referee-Appointed Matches ===
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
       const data = snap.docs
@@ -125,19 +131,7 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
     return () => unsub();
   }, []);
 
-  // Fetch coach appointments
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "coachAppointments"), (snap) => {
-      const data = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as CoachAppointment[];
-      setAppointments(data);
-    });
-    return () => unsub();
-  }, []);
-
-  // Auto-fill
+  // === Auto-fill Match Details ===
   useEffect(() => {
     if (formData.matchId) {
       const match = refereeMatches.find((m) => m.id === formData.matchId);
@@ -154,13 +148,10 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
     }
   }, [formData.matchId, refereeMatches]);
 
-  // Edit
-  const handleEdit = (appt: CoachAppointment) => {
-    const match = refereeMatches.find(
-      (m) => m.homeTeam === appt.homeTeam && m.awayTeam === appt.awayTeam
-    );
+  // === Edit Appointment ===
+  const handleEdit = (appt: Appointment) => {
     setFormData({
-      selectedCoach: appt.coachId,
+      selectedCoach: appt.coachId || "",
       matchId: appt.matchId,
       date: appt.date,
       time: appt.time,
@@ -173,17 +164,19 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
     setShowForm(true);
   };
 
-  // Delete
+  // === Delete Appointment ===
   const handleDelete = async (id: string) => {
     if (!window.confirm("Delete this coach appointment?")) return;
     try {
-      await deleteDoc(doc(db, "coachAppointments", id));
+      await deleteDoc(doc(db, "appointments", id));
+      setAppointments((prev) => prev.filter((a) => a.id !== id));
       toast({ title: "Deleted", description: "Coach appointment removed." });
     } catch (err) {
       toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
     }
   };
 
+  // === Submit (Create or Update) ===
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.selectedCoach || !formData.matchId) {
@@ -208,32 +201,16 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
       awayTeam: match.awayTeam,
       venue: match.venue,
       appointedBy,
+      status: "pending",
       updatedAt: serverTimestamp(),
-    };
-
-    try {
-      setLoading(true);
-
-      if (editMode && currentEditId) {
-        const existing = appointments.find((a) => a.id === currentEditId);
-        await updateDoc(doc(db, "coachAppointments", currentEditId), {
-          ...appointmentData,
-          auditTrail: [
-            ...(existing?.auditTrail || []),
-            {
-              action: "updated",
-              by: appointedBy,
-              timestamp: now,
-              details: `Updated coach for ${match.homeTeam} vs ${match.awayTeam}`,
-            },
-          ],
-        });
-        toast({ title: "Updated", description: "Coach appointment updated." });
-      } else {
-        await addDoc(collection(db, "coachAppointments"), {
-          ...appointmentData,
-          createdAt: serverTimestamp(),
-          auditTrail: [
+      auditTrail: editMode
+        ? arrayUnion({
+            action: "updated",
+            by: appointedBy,
+            timestamp: now,
+            details: `Updated coach for ${match.homeTeam} vs ${match.awayTeam}`,
+          })
+        : [
             {
               action: "created",
               by: appointedBy,
@@ -241,11 +218,49 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
               details: `Coach appointed to ${match.homeTeam} vs ${match.awayTeam}`,
             },
           ],
+    };
+
+    try {
+      setLoading(true);
+      let newApptId: string;
+
+      if (editMode && currentEditId) {
+        // UPDATE
+        await updateDoc(doc(db, "appointments", currentEditId), appointmentData);
+        newApptId = currentEditId;
+        toast({ title: "Updated", description: "Coach appointment updated." });
+      } else {
+        // CREATE
+        const docRef = await addDoc(collection(db, "appointments"), {
+          ...appointmentData,
+          createdAt: serverTimestamp(),
         });
+        newApptId = docRef.id;
         toast({ title: "Success", description: "Coach appointed!" });
       }
 
-      // Reset
+      // === UPDATE PARENT STATE INSTANTLY ===
+      const newAppt: Appointment = {
+        id: newApptId,
+        ...appointmentData,
+        date: match.date,
+        time: match.time,
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        venue: match.venue,
+        coachId: coach.id,
+        status: "pending",
+        auditTrail: appointmentData.auditTrail,
+      };
+
+      setAppointments((prev) => {
+        if (editMode) {
+          return prev.map((a) => (a.id === currentEditId ? newAppt : a));
+        }
+        return [...prev, newAppt];
+      });
+
+      // Reset form
       setFormData({
         selectedCoach: "",
         matchId: "",
@@ -258,8 +273,8 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
     } catch (err: any) {
       console.error("Save error:", err);
       toast({
-        title: "Permission Error",
-        description: "You don't have permission to save coach appointments. Check your role.",
+        title: "Error",
+        description: err.message || "Failed to save appointment.",
         variant: "destructive",
       });
     } finally {
@@ -267,17 +282,13 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
     }
   };
 
-  if (!showForm && appointments.length === 0) {
-    return (
-      <div className="text-center py-8 text-gray-500">
-        No coach appointments yet. Appoint a referee first.
-      </div>
-    );
-  }
+  // === Filter Coach Appointments from Parent State ===
+  const coachAppointments = appointments.filter((a) => a.coachId);
 
   return (
     <div className="space-y-6">
-      {/* Form */}
+
+      {/* === FORM === */}
       {showForm && (
         <Card className="p-6 border-t-4 border-emerald-500">
           <div className="flex justify-between items-center mb-4">
@@ -291,6 +302,11 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
                 setShowForm(false);
                 setEditMode(false);
                 setCurrentEditId(null);
+                setFormData({
+                  selectedCoach: "",
+                  matchId: "",
+                  date: "", time: "", homeTeam: "", awayTeam: "", venue: "",
+                });
               }}
             >
               Close
@@ -299,7 +315,7 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
 
           <form onSubmit={handleSubmit} className="space-y-5">
 
-            {/* Coach */}
+            {/* Coach Select */}
             <div>
               <label className="block text-sm font-medium mb-1">Select Coach *</label>
               <select
@@ -317,7 +333,7 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
               </select>
             </div>
 
-            {/* Match */}
+            {/* Match Select */}
             <div>
               <label className="block text-sm font-medium mb-1">
                 Select Match (Referee Appointed) *
@@ -341,7 +357,7 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
               </select>
             </div>
 
-            {/* Auto-filled */}
+            {/* Auto-filled Match Info */}
             {formData.matchId && (
               <div className="bg-gray-50 p-4 rounded-lg border">
                 <h4 className="font-medium mb-2">Match Details</h4>
@@ -360,22 +376,22 @@ export const CoachAppointmentForm: React.FC<CoachAppointmentFormProps> = ({
               disabled={loading || refereeMatches.length === 0}
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
             >
-              {loading ? "Saving..." : editMode ? "Update" : "Appoint Coach"}
+              {loading ? "Saving..." : editMode ? "Update Appointment" : "Appoint Coach"}
             </Button>
           </form>
         </Card>
       )}
 
-      {/* List */}
+      {/* === LIST OF COACH APPOINTMENTS === */}
       <div>
         <h3 className="text-xl font-bold mb-4">Coach Appointments</h3>
-        {appointments.length === 0 ? (
+        {coachAppointments.length === 0 ? (
           <p className="text-gray-500 text-center py-6">
-            No coach appointments yet.
+            No coach appointments yet. Appoint a referee first.
           </p>
         ) : (
           <div className="space-y-3">
-            {appointments.map((appt) => (
+            {coachAppointments.map((appt) => (
               <Card key={appt.id} className="p-4 hover:shadow-sm transition">
                 <div className="flex justify-between items-start">
                   <div>

@@ -13,8 +13,10 @@ import {
   collection,
   updateDoc,
 } from "firebase/firestore";
+import { signOut } from "firebase/auth";
 import { CoachingReportUnified } from './CoachingReportUnified';
 import { motion, AnimatePresence } from "framer-motion";
+import { LogOut, Edit2, Save, X } from "lucide-react";
 
 interface Report {
   id: string;
@@ -31,9 +33,11 @@ interface Report {
   reviewed?: boolean;
   reviewedBy?: string;
   reviewedAt?: any;
+  venue?: string;
+  referee?: string;
 }
 
-interface CoachAppointment {
+interface Appointment {
   id: string;
   homeTeam: string;
   awayTeam: string;
@@ -48,6 +52,7 @@ interface CoachAppointment {
     by: string;
     timestamp: any;
   }>;
+  referee?: string;
 }
 
 interface AuditEntry {
@@ -62,7 +67,7 @@ export const CoachDashboard: React.FC = () => {
   const [showReportForm, setShowReportForm] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
   const [reports, setReports] = useState<Report[]>([]);
-  const [appointments, setAppointments] = useState<(CoachAppointment & { referee?: string })[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState<any>({});
@@ -75,20 +80,30 @@ export const CoachDashboard: React.FC = () => {
   const coachEmail = user?.email || "";
   const photoURL = user?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(coachName)}&background=10b981&color=fff`;
 
-  // Load Profile
+  // === Load Profile (Full) ===
   useEffect(() => {
     if (!user?.uid) return;
     const unsub = onSnapshot(doc(db, "coaches", user.uid), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setProfile(data);
-        setEditData(data);
+        setEditData({
+          firstName: data.firstName || "",
+          surname: data.surname || "",
+          mobileNumber: data.mobileNumber || "",
+          city: data.city || "",
+          bankName: data.bankName || "",
+          accountNumber: data.accountNumber || "",
+          branch: data.branch || "",
+          approved: data.approved || false,
+        });
       }
+      setLoading(false);
     });
     return () => unsub();
   }, [user?.uid]);
 
-  // Load Reports
+  // === Load Reports ===
   useEffect(() => {
     if (!coachEmail) return;
 
@@ -103,48 +118,34 @@ export const CoachDashboard: React.FC = () => {
         ...doc.data(),
       })) as Report[];
       setReports(data);
-      setLoading(false);
     });
 
     return () => unsub();
   }, [coachEmail]);
 
-  // Load Coach Appointments + Referee + Match Details
+  // === Load Appointments from `appointments` collection (aligned with Executive) ===
   useEffect(() => {
     if (!user?.uid) return;
 
     const q = query(
-      collection(db, "coachAppointments"),
+      collection(db, "appointments"),
       where("coachId", "==", user.uid)
     );
 
-    const unsub = onSnapshot(q, async (snapshot) => {
+    const unsub = onSnapshot(q, (snapshot) => {
       const appts = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
-      })) as CoachAppointment[];
+      })) as Appointment[];
 
-      const enriched = await Promise.all(
-        appts.map(async (appt) => {
-          if (!appt.matchId) return { ...appt, referee: "—" };
-
-          const matchDoc = await getDoc(doc(db, "appointments", appt.matchId));
-          if (!matchDoc.exists()) return { ...appt, referee: "—" };
-
-          const data = matchDoc.data();
-          const referee = data.referee || data.ar || "—";
-          return { ...appt, referee };
-        })
-      );
-
-      setAppointments(enriched);
+      setAppointments(appts);
     });
 
     return () => unsub();
   }, [user?.uid]);
 
-  // Open Report Form with Pre-filled Data
-  const openReportForm = (appt: CoachAppointment & { referee?: string }) => {
+  // === Open Report Form ===
+  const openReportForm = (appt: Appointment) => {
     setSelectedMatch({
       homeTeam: appt.homeTeam,
       awayTeam: appt.awayTeam,
@@ -152,18 +153,17 @@ export const CoachDashboard: React.FC = () => {
       time: appt.time,
       venue: appt.venue,
       referee: appt.referee || "—",
-      matchId: appt.matchId,
+      matchId: appt.id,
     });
     setShowReportForm(true);
   };
 
-  // Close Form
   const closeReportForm = () => {
     setShowReportForm(false);
     setSelectedMatch(null);
   };
 
-  // Load Audit Trail
+  // === Audit Trail ===
   const loadAuditTrail = (apptId: string) => {
     if (selectedApptId === apptId) {
       setSelectedApptId(null);
@@ -171,7 +171,7 @@ export const CoachDashboard: React.FC = () => {
       return;
     }
 
-    const trailRef = collection(db, "coachAppointments", apptId, "auditTrail");
+    const trailRef = collection(db, "appointments", apptId, "auditTrail");
     const unsub = onSnapshot(trailRef, (snap) => {
       const trail = snap.docs.map((d) => ({
         id: d.id,
@@ -183,22 +183,34 @@ export const CoachDashboard: React.FC = () => {
     return () => unsub();
   };
 
-  // Save Profile
+  // === Save Profile ===
   const handleSaveProfile = async () => {
     if (!user?.uid) return;
     try {
       await updateDoc(doc(db, "coaches", user.uid), editData);
-      await updateDoc(doc(db, "users", user.uid), editData);
+      await updateDoc(doc(db, "users", user.uid), {
+        displayName: `${editData.firstName} ${editData.surname}`.trim(),
+      });
       setEditing(false);
     } catch (err) {
       alert("Failed to save profile.");
     }
   };
 
-  // Stats
+  // === Logout ===
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      window.location.href = "/login";
+    } catch (err) {
+      alert("Logout failed.");
+    }
+  };
+
+  // === Stats ===
   const totalReports = reports.length;
   const thisMonthReports = reports.filter((r) => {
-    const date = r.createdAt?.toDate();
+    const date = r.createdAt?.toDate?.() || new Date(r.createdAt);
     if (!date) return false;
     const now = new Date();
     return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
@@ -210,7 +222,7 @@ export const CoachDashboard: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 p-4 md:p-6">
       <div className="max-w-7xl mx-auto space-y-6">
 
-        {/* Header */}
+        {/* Header with Logout */}
         <div className="bg-white rounded-2xl shadow-sm p-6 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-4">
             <Avatar src={photoURL} size="lg" />
@@ -219,7 +231,8 @@ export const CoachDashboard: React.FC = () => {
               <p className="text-sm text-gray-600">{coachEmail}</p>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
+
+          <div className="flex gap-2 items-center">
             <Button
               variant={activeTab === "appointments" ? "default" : "outline"}
               onClick={() => setActiveTab("appointments")}
@@ -238,6 +251,15 @@ export const CoachDashboard: React.FC = () => {
             >
               Profile
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </Button>
           </div>
         </div>
 
@@ -252,12 +274,12 @@ export const CoachDashboard: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 {appointments.map((appt) => (
-                  <Card
-                    key={appt.id}
-                    className="p-5 hover:shadow-md transition"
-                  >
+                  <Card key={appt.id} className="p-5 hover:shadow-md transition">
                     <div className="flex justify-between items-start gap-4">
-                      <div className="flex-1 cursor-pointer" onClick={() => loadAuditTrail(appt.id)}>
+                      <div
+                        className="flex-1 cursor-pointer"
+                        onClick={() => loadAuditTrail(appt.id)}
+                      >
                         <h4 className="font-bold text-lg text-gray-900">
                           {appt.homeTeam} vs {appt.awayTeam}
                         </h4>
@@ -265,7 +287,7 @@ export const CoachDashboard: React.FC = () => {
                           {appt.date} • {appt.time} • {appt.venue}
                         </p>
                         <p className="text-sm text-gray-700 mt-1">
-                          <strong>Referee:</strong> {appt.referee}
+                          <strong>Referee:</strong> {appt.referee || "—"}
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
                           Appointed by: <span className="font-medium">{appt.appointedBy}</span>
@@ -290,7 +312,7 @@ export const CoachDashboard: React.FC = () => {
                         {auditTrail.map((entry) => (
                           <p key={entry.id} className="text-xs text-gray-500">
                             {entry.action} by <span className="font-medium">{entry.by}</span> •{" "}
-                            {entry.timestamp?.toDate
+                            {entry.timestamp?.toDate?.()
                               ? new Date(entry.timestamp.toDate()).toLocaleString()
                               : new Date(entry.timestamp).toLocaleString()}
                           </p>
@@ -304,7 +326,7 @@ export const CoachDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* REPORT FORM (Pre-filled) */}
+        {/* REPORT FORM */}
         <AnimatePresence>
           {showReportForm && selectedMatch && (
             <motion.div
@@ -321,7 +343,7 @@ export const CoachDashboard: React.FC = () => {
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-xl font-bold">Submit Match Report</h3>
                   <Button variant="ghost" size="sm" onClick={closeReportForm}>
-                    Close
+                    <X className="w-5 h-5" />
                   </Button>
                 </div>
 
@@ -337,9 +359,7 @@ export const CoachDashboard: React.FC = () => {
                     referee: selectedMatch.referee,
                     matchId: selectedMatch.matchId,
                   }}
-                  onSuccess={() => {
-                    closeReportForm();
-                  }}
+                  onSuccess={closeReportForm}
                 />
               </Card>
             </motion.div>
@@ -349,7 +369,6 @@ export const CoachDashboard: React.FC = () => {
         {/* REPORTS TAB */}
         {activeTab === "reports" && (
           <>
-            {/* STATS */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <StatCard title="Total Reports" value={totalReports} icon="Document" color="emerald" />
               <StatCard title="This Month" value={thisMonthReports} icon="Calendar" color="amber" />
@@ -357,122 +376,139 @@ export const CoachDashboard: React.FC = () => {
               <StatCard title="Pending" value={pendingReview} icon="Clock" color="purple" />
             </div>
 
-           {/* Reports List */}
-<div className="space-y-4">
-  <h3 className="text-2xl font-bold">Your Reports</h3>
-  {loading ? (
-    <Card><p className="text-center py-8 text-gray-500">Loading...</p></Card>
-  ) : reports.length === 0 ? (
-    <Card><p className="text-center py-8 text-gray-500">No reports yet. Submit from Appointments!</p></Card>
-  ) : (
-    <div className="space-y-4">
-      {reports.map((report) => (
-        <Card key={report.id} className="p-5 hover:shadow-lg transition">
-          <div className="flex justify-between items-start gap-4">
-            <div className="flex-1">
-              {/* Match & Teams */}
-              <h4 className="font-bold text-lg text-gray-900">
-                {report.homeTeam} vs {report.awayTeam}
-              </h4>
-
-              {/* Date, Venue, Referee */}
-              <div className="text-sm text-gray-600 space-y-1 mt-1">
-                <p>
-                  {report.matchDate && new Date(report.matchDate).toLocaleDateString()} • {report.venue}
-                </p>
-                <p>
-                  <strong>Referee:</strong> {report.referee || "—"}
-                </p>
-              </div>
-
-              {/* Report Type & Status */}
-              <p className="text-xs text-gray-500 mt-2">
-                {report.reportType === "junior_coaching" ? "Junior" : "Senior"} Coaching Report •{" "}
-                {new Date(report.createdAt?.toDate()).toLocaleDateString()}
-              </p>
-
-              {report.reviewed && (
-                <p className="text-xs text-emerald-600 mt-1">
-                  Reviewed by {report.reviewedBy}
-                </p>
-              )}
-            </div>
-
-            {/* Status Badge */}
-            <div className="text-right">
-              {report.reviewed ? (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-                  Reviewed
-                </span>
+            <div className="space-y-4">
+              <h3 className="text-2xl font-bold">Your Reports</h3>
+              {loading ? (
+                <Card><p className="text-center py-8 text-gray-500">Loading...</p></Card>
+              ) : reports.length === 0 ? (
+                <Card><p className="text-center py-8 text-gray-500">No reports yet. Submit from Appointments!</p></Card>
               ) : (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                  Pending
-                </span>
+                <div className="space-y-4">
+                  {reports.map((report) => (
+                    <Card key={report.id} className="p-5 hover:shadow-lg transition">
+                      <div className="flex justify-between items-start gap-4">
+                        <div className="flex-1">
+                          <h4 className="font-bold text-lg text-gray-900">
+                            {report.homeTeam} vs {report.awayTeam}
+                          </h4>
+                          <div className="text-sm text-gray-600 space-y-1 mt-1">
+                            <p>
+                              {report.matchDate && new Date(report.matchDate).toLocaleDateString()} • {report.venue}
+                            </p>
+                            <p>
+                              <strong>Referee:</strong> {report.referee || "—"}
+                            </p>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2">
+                            {report.reportType === "junior_coaching" ? "Junior" : "Senior"} Coaching Report •{" "}
+                            {new Date(report.createdAt?.toDate?.() || report.createdAt).toLocaleDateString()}
+                          </p>
+                          {report.reviewed && (
+                            <p className="text-xs text-emerald-600 mt-1">
+                              Reviewed by {report.reviewedBy}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          {report.reviewed ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                              Reviewed
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                              Pending
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
               )}
             </div>
-          </div>
-        </Card>
-      ))}
-    </div>
-  )}
-</div>
           </>
         )}
 
-        {/* PROFILE TAB */}
+        {/* PROFILE TAB - FULL EDIT */}
         {activeTab === "profile" && (
           <Card className="p-6">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-2xl font-bold">Coach Profile</h3>
-              <Button
-                variant={editing ? "danger" : "outline"}
-                size="sm"
-                onClick={() => editing ? setEditing(false) : setEditing(true)}
-              >
-                {editing ? "Cancel" : "Edit"}
-              </Button>
+              <div className="flex gap-2">
+                {editing ? (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+                      <X className="w-4 h-4 mr-1" /> Cancel
+                    </Button>
+                    <Button size="sm" onClick={handleSaveProfile}>
+                      <Save className="w-4 h-4 mr-1" /> Save
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                    <Edit2 className="w-4 h-4 mr-1" /> Edit
+                  </Button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Read-only Email */}
+              <div>
+                <p className="font-medium text-gray-700">Email</p>
+                <p className="text-lg">{coachEmail}</p>
+              </div>
+
               {editing ? (
                 <>
                   <input
                     value={editData.firstName || ""}
                     onChange={(e) => setEditData({ ...editData, firstName: e.target.value })}
                     placeholder="First Name"
-                    className="input"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
                   />
                   <input
                     value={editData.surname || ""}
                     onChange={(e) => setEditData({ ...editData, surname: e.target.value })}
                     placeholder="Surname"
-                    className="input"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
                   />
                   <input
                     value={editData.mobileNumber || ""}
                     onChange={(e) => setEditData({ ...editData, mobileNumber: e.target.value })}
-                    placeholder="Mobile"
-                    className="input"
+                    placeholder="Mobile Number"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
                   />
                   <input
                     value={editData.city || ""}
                     onChange={(e) => setEditData({ ...editData, city: e.target.value })}
                     placeholder="City"
-                    className="input"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
                   />
-                  <Button onClick={handleSaveProfile} className="col-span-2">
-                    Save Changes
-                  </Button>
+                  <input
+                    value={editData.bankName || ""}
+                    onChange={(e) => setEditData({ ...editData, bankName: e.target.value })}
+                    placeholder="Bank Name"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
+                  />
+                  <input
+                    value={editData.accountNumber || ""}
+                    onChange={(e) => setEditData({ ...editData, accountNumber: e.target.value })}
+                    placeholder="Account Number"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
+                  />
+                  <input
+                    value={editData.branch || ""}
+                    onChange={(e) => setEditData({ ...editData, branch: e.target.value })}
+                    placeholder="Branch"
+                    className="w-full border rounded-lg px-4 py-2 text-sm"
+                  />
                 </>
               ) : (
                 <>
                   <div>
                     <p className="font-medium text-gray-700">Name</p>
                     <p className="text-lg">{profile?.firstName} {profile?.surname}</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-700">Email</p>
-                    <p className="text-lg">{coachEmail}</p>
                   </div>
                   <div>
                     <p className="font-medium text-gray-700">Mobile</p>
@@ -487,12 +523,20 @@ export const CoachDashboard: React.FC = () => {
                     <p className="text-lg">{profile?.bankName || "-"}</p>
                   </div>
                   <div>
+                    <p className="font-medium text-gray-700">Account</p>
+                    <p className="text-lg">{profile?.accountNumber || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Branch</p>
+                    <p className="text-lg">{profile?.branch || "-"}</p>
+                  </div>
+                  <div>
                     <p className="font-medium text-gray-700">Status</p>
                     <p className="text-lg">
                       {profile?.approved ? (
-                        <span className="text-emerald-600">Approved</span>
+                        <span className="text-emerald-600 font-medium">Approved</span>
                       ) : (
-                        <span className="text-amber-600">Pending</span>
+                        <span className="text-amber-600 font-medium">Pending Approval</span>
                       )}
                     </p>
                   </div>
