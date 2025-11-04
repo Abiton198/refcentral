@@ -19,4 +19,19 @@
   "theme_color": "#059669",
   "orientation": "portrait-primary",
   "description": "Executive board dashboard for referees, reports, and results management."
+
+,"screenshots": [
+    {
+      "src": "/icons/home.png",
+      "sizes": "320x320",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/home-desktop.png",
+      "sizes": "320x320",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ]
+
 }

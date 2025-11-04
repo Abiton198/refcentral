@@ -1,38 +1,52 @@
 const CACHE_NAME = "exec-dashboard-cache-v1";
-const urlsToCache = ["/", "/index.html", "/manifest.json"];
+const urlsToCache = [
+  "/",
+  "/index.html",
+  "/site.webmanifest",
+  "/icons/epru-320x320.png"
+];
 
-// Install SW
-self.addEventListener("install", (event) => {
-  self.skipWaiting(); // Activate immediately
-  event.waitUntil(
+// Install
+self.addEventListener("install", (e) => {
+  e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(urlsToCache))
   );
+  self.skipWaiting();
 });
 
-// Activate SW + remove old caches
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
+// Activate
+self.addEventListener("activate", (e) => {
+  e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.map((key) => key !== CACHE_NAME && caches.delete(key)))
-    )
+      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch with network-first strategy
-self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        return response;
+// Fetch — ONLY CACHE GET REQUESTS
+self.addEventListener("fetch", (e) => {
+  const { request } = e;
+
+  // BLOCK POST, PUT, DELETE FROM CACHING
+  if (request.method !== "GET") {
+    return; // ← This stops the error
+  }
+
+  e.respondWith(
+    fetch(request)
+      .then((res) => {
+        if (!res || res.status !== 200) return res;
+        const clone = res.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(request, clone).catch(() => {});
+        });
+        return res;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(request))
   );
 });
 
-// 🔄 Auto-update logic
-self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") self.skipWaiting();
+// Auto-update
+self.addEventListener("message", (e) => {
+  if (e.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
