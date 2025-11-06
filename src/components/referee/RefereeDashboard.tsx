@@ -26,48 +26,42 @@ import { getAuth, signOut, updateProfile as updateAuthProfile } from "firebase/a
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { toast } from "@/components/ui/use-toast";
 import { motion } from "framer-motion";
+import { 
+  Menu, X, LogOut, Camera, CheckCircle, AlertCircle, Clock, FileText, Trophy,
+  ChevronDown, MessageSquare, Edit3, CheckCircle2 
+} from "lucide-react";
 
-/**
- * Referee Dashboard
- * - View appointments, accept/reject, submit results
- * - Submit reports (card/general) immediately after accepting
- * - View/edit reports in detail
- * - Full audit trail
- * - Stats: Pending, Accepted, Rejected, Reports, Total
- */
 export const RefereeDashboard: React.FC = () => {
-  // === STATE ===
   const [appointments, setAppointments] = useState<any[]>([]);
   const [profile, setProfile] = useState<any | null>(null);
-  const [reports, setReports] = useState<any[]>([]); // Grouped by matchId
+  const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeReportId, setActiveReportId] = useState<string | null>(null); // For edit modal
+  const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [viewProfile, setViewProfile] = useState(false);
-  const [expandedResultId, setExpandedResultId] = useState<string | null>(null); // Result form
+  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [resultForm, setResultForm] = useState<any>({});
-  const [showReportCenter, setShowReportCenter] = useState<string | null>(null); // appointmentId
+  const [showReportCenter, setShowReportCenter] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [expandedAudit, setExpandedAudit] = useState<string | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
 
-  // === AUTH & FIREBASE ===
   const auth = getAuth();
   const user = auth.currentUser;
   const storage = getStorage();
   const currentRefereeId = user?.uid || "";
   const currentRefereeEmail = user?.email || "";
-  const profilePhoto = profile?.photoURL || user?.photoURL || "/default-avatar.png";
 
-  // === LOGOUT ===
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      toast({ title: "Signed Out", description: "Logged out successfully." });
+      toast({ title: "Signed Out" });
       window.location.href = "/";
     } catch {
-      toast({ title: "Error", description: "Failed to log out.", variant: "destructive" });
+      toast({ title: "Error", description: "Logout failed.", variant: "destructive" });
     }
   };
 
-  // === FETCH OR CREATE REFEREE PROFILE ===
   useEffect(() => {
     const fetchProfile = async () => {
       if (!currentRefereeId) return;
@@ -90,58 +84,40 @@ export const RefereeDashboard: React.FC = () => {
     fetchProfile();
   }, [currentRefereeId, currentRefereeEmail]);
 
-  // === UPLOAD PROFILE IMAGE ===
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentRefereeId) return;
+    setUploading(true);
     try {
-      setUploading(true);
       const fileRef = storageRef(storage, `referees/${currentRefereeId}/profile.jpg`);
       const uploadTask = uploadBytesResumable(fileRef, file);
       uploadTask.on(
         "state_changed",
         null,
-        (error) => {
-          console.error("Upload error:", error);
-          setUploading(false);
-        },
+        () => setUploading(false),
         async () => {
-          const downloadURL = await getDownloadURL(fileRef);
-          await updateDoc(doc(db, "referees", currentRefereeId), {
-            photoURL: downloadURL,
-            updatedAt: new Date(),
-          });
-          if (auth.currentUser)
-            await updateAuthProfile(auth.currentUser, { photoURL: downloadURL });
-          setProfile((p: any) => ({ ...p, photoURL: downloadURL }));
-          toast({ title: "Profile photo updated" });
+          const url = await getDownloadURL(fileRef);
+          await updateDoc(doc(db, "referees", currentRefereeId), { photoURL: url });
+          if (auth.currentUser) await updateAuthProfile(auth.currentUser, { photoURL: url });
+          setProfile((p: any) => ({ ...p, photoURL: url }));
+          toast({ title: "Photo updated" });
           setUploading(false);
         }
       );
     } catch {
       setUploading(false);
-      toast({ title: "Error", description: "Upload failed", variant: "destructive" });
+      toast({ title: "Error", variant: "destructive" });
     }
   };
 
-  // === TOGGLE AVAILABILITY ===
   const toggleAvailability = async () => {
     if (!profile?.id) return;
     const newStatus = profile.availabilityStatus === "available" ? "unavailable" : "available";
-    try {
-      await updateDoc(doc(db, "referees", profile.id), {
-        availabilityStatus: newStatus,
-        updatedAt: new Date(),
-      });
-      setProfile((prev: any) => ({ ...prev, availabilityStatus: newStatus }));
-      toast({ title: `You are now ${newStatus === "available" ? "Available" : "Unavailable"}` });
-    } catch (err) {
-      console.error("Availability toggle error:", err);
-      toast({ title: "Error", description: "Failed to update availability.", variant: "destructive" });
-    }
+    await updateDoc(doc(db, "referees", profile.id), { availabilityStatus: newStatus });
+    setProfile((p: any) => ({ ...p, availabilityStatus: newStatus }));
+    toast({ title: `Now ${newStatus}` });
   };
 
-  // === FETCH APPOINTMENTS (Referee + AR) ===
   useEffect(() => {
     if (!currentRefereeEmail) return;
 
@@ -172,442 +148,306 @@ export const RefereeDashboard: React.FC = () => {
     }
 
     setLoading(false);
-    return () => {
-      unsubRef();
-      unsubAR();
-    };
+    return () => { unsubRef(); unsubAR(); };
   }, [currentRefereeEmail]);
 
-  // === FETCH REPORTS + GROUP BY MATCH + AUDIT TRAIL ===
   useEffect(() => {
     if (!currentRefereeId) return;
-    const q = query(
-      collection(db, "reports"),
-      where("refereeId", "==", currentRefereeId),
-      orderBy("createdAt", "desc")
-    );
+    const q = query(collection(db, "reports"), where("refereeId", "==", currentRefereeId), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, async (snap) => {
-      const rawReports = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const reportsWithAudit = await Promise.all(
-        rawReports.map(async (r) => {
-          let auditTrail = r.auditTrail || [];
-          try {
-            const auditSnap = await getDocs(collection(db, "reports", r.id, "auditTrail"));
-            auditTrail = auditSnap.docs.map((a) => a.data());
-          } catch (e) {
-            console.warn("Audit subcollection fetch failed, using root-level:", e);
-          }
-
-          const matchDisplay = r.homeTeam && r.awayTeam
-            ? `${r.homeTeam} vs ${r.awayTeam}`
-            : r.teams || "Unknown Match";
-
-          return {
-            id: r.id,
-            matchId: r.matchId || r.id,
-            type: r.type || "general_report",
-            matchDisplay,
-            createdAt: r.createdAt?.toDate(),
-            reviewed: r.reviewed || false,
-            reviewedBy: r.reviewedBy || null,
-            reviewedAt: r.reviewedAt?.toDate() || null,
-            auditTrail: auditTrail.sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp)),
-          };
-        })
-      );
-
-      // Group by matchId
-      const grouped = reportsWithAudit.reduce((acc: any, r) => {
-        const key = r.matchId;
-        if (!acc[key]) {
-          acc[key] = {
-            matchId: key,
-            matchDisplay: r.matchDisplay,
-            reports: [],
-            auditTrail: [],
-          };
-        }
-        acc[key].reports.push({ id: r.id, type: r.type, reviewed: r.reviewed, reviewedBy: r.reviewedBy, reviewedAt: r.reviewedAt });
-        acc[key].auditTrail.push(...r.auditTrail);
+      const raw = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const grouped = raw.reduce((acc: any, r) => {
+        const key = r.matchId || r.id;
+        if (!acc[key]) acc[key] = { matchId: key, matchDisplay: `${r.homeTeam} vs ${r.awayTeam}`, reports: [], auditTrail: [] };
+        acc[key].reports.push({ id: r.id, type: r.type, reviewed: r.reviewed });
+        acc[key].auditTrail.push(...(r.auditTrail || []));
         return acc;
       }, {});
-
-      const mergedReports = Object.values(grouped).map((g: any) => {
-        g.auditTrail = [...new Set(g.auditTrail.map((a: any) => JSON.stringify(a)))].map((s: string) => JSON.parse(s));
-        g.auditTrail.sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp));
-        return g;
-      });
-
-      setReports(mergedReports);
+      setReports(Object.values(grouped));
     });
     return () => unsub();
   }, [currentRefereeId]);
 
-  // === ACCEPT / REJECT APPOINTMENT ===
   const handleResponse = async (id: string, response: "accepted" | "rejected", role: string) => {
-    try {
-      const aptRef = doc(db, "appointments", id);
-      const auditEntry = {
-        by: currentRefereeEmail,
-        action: response === "accepted" ? "Accepted" : "Rejected",
-        details: `Appointment as ${role}`,
-        timestamp: new Date().toISOString(),
-      };
-
-      await updateDoc(aptRef, {
-        [`responses.${role}`]: {
-          status: response,
-          respondedAt: Timestamp.now(),
-        },
-        status: response,
-        updatedAt: Timestamp.now(),
-        auditTrail: arrayUnion(auditEntry),
-      });
-
-      toast({ title: "Updated", description: `You have ${response} this appointment.` });
-    } catch (error: any) {
-      console.error("UPDATE FAILED:", error);
-      toast({
-        title: "Permission Denied",
-        description: error.message || "You cannot update this appointment.",
-        variant: "destructive",
-      });
-    }
+    const aptRef = doc(db, "appointments", id);
+    await updateDoc(aptRef, {
+      [`responses.${role}`]: { status: response, respondedAt: Timestamp.now() },
+      status: response,
+      auditTrail: arrayUnion({ by: currentRefereeEmail, action: response === "accepted" ? "Accepted" : "Rejected", timestamp: new Date().toISOString() }),
+    });
+    toast({ title: response === "accepted" ? "Accepted" : "Declined" });
   };
 
-  // === COMPUTE STATS ===
-  const pending = appointments.filter((a) => a.responses?.[a._role]?.status === "pending" || !a.responses?.[a._role]).length;
+  const pending = appointments.filter((a) => !a.responses?.[a._role]?.status || a.responses[a._role].status === "pending").length;
   const accepted = appointments.filter((a) => a.responses?.[a._role]?.status === "accepted").length;
   const rejected = appointments.filter((a) => a.responses?.[a._role]?.status === "rejected").length;
 
-  // === PROFILE VIEW ===
   if (viewProfile) {
     return (
-      <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold">My Profile</h2>
-          <Button variant="outline" onClick={() => setViewProfile(false)}>
-            Back
-          </Button>
+      <div className="p-4 sm:p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold">My Profile</h2>
+          <Button variant="outline" size="sm" onClick={() => setViewProfile(false)}>Back</Button>
         </div>
         <RefereeProfiles currentRefereeId={currentRefereeId} editable />
       </div>
     );
   }
 
-  // === MAIN RENDER ===
   return (
-    <div className="space-y-8">
-      {/* HEADER */}
-      <div className="flex justify-between items-center">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-3xl font-bold text-gray-900">Referee Dashboard</h2>
-            <button onClick={toggleAvailability} className="flex items-center gap-1 text-sm font-medium cursor-pointer">
-              <span className={`inline-block w-3 h-3 rounded-full ${profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"}`}></span>
-              {profile?.availabilityStatus === "available" ? (
-                <span className="text-green-700">Available</span>
-              ) : (
-                <span className="text-red-600">Unavailable</span>
-              )}
-            </button>
+    <>
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 p-4 pb-24 sm:pb-8">
+        <div className="max-w-4xl mx-auto space-y-6">
+
+          {/* Mobile Header */}
+          <div className="sm:hidden bg-white rounded-xl shadow-sm p-4 mb-4">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2">
+                  {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+                </button>
+                <div>
+                  <h2 className="text-xl font-bold">Referee</h2>
+                  <button onClick={toggleAvailability} className="flex items-center gap-1 text-xs">
+                    <span className={`w-2 h-2 rounded-full ${profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"}`} />
+                    <span className={profile?.availabilityStatus === "available" ? "text-green-700" : "text-red-600"}>
+                      {profile?.availabilityStatus === "available" ? "Available" : "Unavailable"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <img
+                    src={profile?.photoURL || "/default-avatar.png"}
+                    onClick={() => setViewProfile(true)}
+                    className={`w-10 h-10 rounded-full border-2 ${uploading ? "animate-pulse opacity-60" : "border-emerald-500"} cursor-pointer`}
+                    alt="profile"
+                  />
+                  <label className="absolute bottom-0 right-0 bg-emerald-600 text-white text-xs p-1 rounded cursor-pointer">
+                    <Camera className="w-3 h-3" />
+                    <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                  </label>
+                </div>
+                <Button size="sm" variant="ghost" onClick={handleLogout} className="text-red-600">
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+
+            {mobileMenuOpen && (
+              <div className="mt-4 pt-4 border-t space-y-2">
+                <button onClick={() => { setViewProfile(true); setMobileMenuOpen(false); }} className="w-full text-left py-2 text-sm font-medium text-gray-700">
+                  My Profile
+                </button>
+                <button onClick={handleLogout} className="w-full text-left py-2 text-sm font-medium text-red-600">
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
-          <p className="text-gray-600">Manage your profile, appointments, and results</p>
-        </div>
 
-        <div className="flex items-center gap-4">
-          <div className="relative">
-            <img
-              src={profilePhoto}
-              onClick={() => setViewProfile(true)}
-              className={`w-12 h-12 rounded-full cursor-pointer border-2 ${
-                uploading ? "animate-pulse opacity-60" : "border-emerald-500"
-              }`}
-              alt="profile"
-            />
-            <label className="absolute bottom-0 right-0 bg-emerald-600 text-white text-xs px-1.5 py-0.5 rounded cursor-pointer">
-              <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-            </label>
+          {/* Desktop Header */}
+          <div className="hidden sm:flex justify-between items-center bg-white p-6 rounded-xl shadow-sm">
+            <div>
+              <h2 className="text-text-3xl font-bold">Referee Dashboard</h2>
+              <p className="text-gray-600">Manage appointments, results & reports</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <button onClick={toggleAvailability} className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"}`} />
+                <span className="font-medium">{profile?.availabilityStatus === "available" ? "Available" : "Unavailable"}</span>
+              </button>
+              <div className="relative">
+                <img src={profile?.photoURL || "/default-avatar.png"} className="w-12 h-12 rounded-full border-2 border-emerald-500 cursor-pointer" onClick={() => setViewProfile(true)} />
+                <label className="absolute bottom-0 right-0 bg-emerald-600 text-white p-1 rounded cursor-pointer">
+                  <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                </label>
+              </div>
+              <Button variant="outline" onClick={handleLogout} className="text-red-600 border-red-600">Logout</Button>
+            </div>
           </div>
-          <Button variant="outline" onClick={handleLogout} className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white">
-            Logout
-          </Button>
-        </div>
-      </div>
 
-      {/* STATS – Now includes Reports count */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <StatCard title="Pending" value={pending} icon="Pending" color="amber" />
-        <StatCard title="Accepted" value={accepted} icon="Accepted" color="green" />
-        <StatCard title="Rejected" value={rejected} icon="Rejected" color="red" />
-        <StatCard title="Reports" value={reports.length} icon="FileText" color="blue" />
-        <StatCard title="Total" value={accepted + rejected} icon="Trophy" color="emerald" />
-      </div>
+          {/* Stats */}
+          <div>
+            <Button variant="ghost" size="sm" className="sm:hidden w-full justify-between mb-2" onClick={() => setStatsOpen(!statsOpen)}>
+              Stats <ChevronDown className={`w-4 h-4 transition ${statsOpen ? "rotate-180" : ""}`} />
+            </Button>
+            {(statsOpen || window.innerWidth >= 640) && (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <StatCard title="Pending" value={pending} icon={<AlertCircle className="w-5 h-5" />} color="amber" />
+                <StatCard title="Accepted" value={accepted} icon={<CheckCircle className="w-5 h-5" />} color="emerald" />
+                <StatCard title="Rejected" value={rejected} icon={<X className="w-5 h-5" />} color="red" />
+                <StatCard title="Reports" value={reports.length} icon={<FileText className="w-5 h-5" />} color="blue" />
+                <StatCard title="Total" value={accepted + rejected} icon={<Trophy className="w-5 h-5" />} color="purple" />
+              </div>
+            )}
+          </div>
 
-      {/* APPOINTMENTS */}
-      <div>
-        <h3 className="text-2xl font-bold mb-4">Your Appointments</h3>
-        {loading ? (
-          <p className="text-gray-500 text-center py-6">Loading...</p>
-        ) : appointments.length === 0 ? (
-          <p className="text-gray-500 text-center py-6">No appointments yet.</p>
-        ) : (
-          <div className="space-y-4">
-            {appointments.map((apt) => {
-              const isExpanded = expandedResultId === apt.id;
-              const status = apt.responses?.[apt._role]?.status || "pending";
-              const yourRole = apt._role === "referee" ? "Referee" : "Assistant Referee";
-              const yourName = apt._role === "referee" ? apt.refereeName : apt.arName;
-              const matchReport = reports.find((r: any) => r.matchId === apt.id);
-              const hasReport = matchReport?.reports?.length > 0;
+          {/* Appointments */}
+          <div>
+            <h3 className="text-xl sm:text-2xl font-bold mb-3">Appointments</h3>
+            {loading ? (
+              <p className="text-center py-8 text-gray-500">Loading...</p>
+            ) : appointments.length === 0 ? (
+              <p className="text-center py-8 text-gray-500">No appointments.</p>
+            ) : (
+              <div className="space-y-4">
+                {appointments.map((apt) => {
+                  const status = apt.responses?.[apt._role]?.status || "pending";
+                  const role = apt._role === "referee" ? "Referee" : "AR";
+                  const matchReport = reports.find((r: any) => r.matchId === apt.id);
+                  const hasReport = matchReport?.reports?.length > 0;
 
-              return (
-                <Card key={`${apt.id}-${apt._role}`} className="p-5 border shadow-sm hover:shadow-md transition">
-                  <div className="flex justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold text-lg">{apt.homeTeam} vs {apt.awayTeam}</h3>
-                        <Badge variant={status === "accepted" ? "success" : status === "rejected" ? "danger" : "warning"}>
-                          {status.toUpperCase()}
-                        </Badge>
+                  return (
+                    <Card key={apt.id} className="p-4 shadow-sm">
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-bold text-lg">{apt.homeTeam} vs {apt.awayTeam}</h4>
+                            <p className="text-sm text-gray-600">{apt.date} • {apt.time} • {apt.venue}</p>
+                            <p className="text-xs text-emerald-700 font-medium">Role: {role}</p>
+                          </div>
+                          <Badge variant={status === "accepted" ? "success" : status === "rejected" ? "danger" : "warning"}>
+                            {status.toUpperCase()}
+                          </Badge>
+                        </div>
+
+                        {hasReport && (
+                          <div className="flex gap-1 flex-wrap">
+                            {matchReport.reports.map((r: any) => (
+                              <Badge key={r.id} variant={r.reviewed ? "success" : "warning"} className="text-xs">
+                                {r.type.replace("_", " ")}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        {status === "pending" && (
+                          <div className="flex gap-2">
+                            <Button size="sm" className="flex-1" onClick={() => handleResponse(apt.id, "accepted", apt._role)}>
+                              Accept
+                            </Button>
+                            <Button size="sm" variant="danger" className="flex-1" onClick={() => handleResponse(apt.id, "rejected", apt._role)}>
+                              Decline
+                            </Button>
+                          </div>
+                        )}
+
+                        {status === "accepted" && (
+                          <div className="flex gap-2 flex-wrap">
+                            <Button size="sm" variant="outline" onClick={() => setShowReportCenter(apt.id)} className="flex-1">
+                              <MessageSquare className="w-3 h-3 mr-1" /> Report
+                            </Button>
+                            <Button size="sm" onClick={() => setExpandedResultId(expandedResultId === apt.id ? null : apt.id)} className="flex-1">
+                              <Edit3 className="w-3 h-3 mr-1" /> {apt.resultSubmitted ? "Edit" : "Result"}
+                            </Button>
+                          </div>
+                        )}
+
+                        {apt.resultSubmitted && !expandedResultId && (
+                          <p className="text-emerald-700 text-sm font-medium">{apt.resultSummary}</p>
+                        )}
+
+                        {(apt.auditTrail?.length > 0 || matchReport?.auditTrail?.length > 0) && (
+                          <div>
+                            <Button variant="ghost" size="sm" className="w-full justify-between" onClick={() => setExpandedAudit(expandedAudit === apt.id ? null : apt.id)}>
+                              Audit Trail ({(apt.auditTrail?.length || 0) + (matchReport?.auditTrail?.length || 0)})
+                              <ChevronDown className={`w-4 h-4 transition ${expandedAudit === apt.id ? "rotate-180" : ""}`} />
+                            </Button>
+                            {expandedAudit === apt.id && (
+                              <div className="mt-2 p-3 bg-gray-50 rounded text-xs space-y-1 max-h-32 overflow-y-auto">
+                                {[...(apt.auditTrail || []), ...(matchReport?.auditTrail || [])]
+                                  .sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp))
+                                  .map((log: any, i: number) => (
+                                    <p key={i}><strong>{log.by}</strong>: {log.action} <span className="text-gray-400">({new Date(log.timestamp).toLocaleString()})</span></p>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {expandedResultId === apt.id && (
+                          <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="overflow-hidden">
+                            <div className="space-y-3 mt-3 p-3 bg-gray-50 rounded">
+                              <div className="grid grid-cols-2 gap-2">
+                                <input type="number" placeholder="Home" className="border rounded px-2 py-1 text-sm" value={resultForm.homeScore ?? ""} onChange={(e) => setResultForm({ ...resultForm, homeScore: e.target.value })} />
+                                <input type="number" placeholder="Away" className="border rounded px-2 py-1 text-sm" value={resultForm.awayScore ?? ""} onChange={(e) => setResultForm({ ...resultForm, awayScore: e.target.value })} />
+                              </div>
+                              <input type="text" placeholder="Player of match" className="w-full border rounded px-2 py-1 text-sm" value={resultForm.playerOfMatch ?? ""} onChange={(e) => setResultForm({ ...resultForm, playerOfMatch: e.target.value })} />
+                              <textarea placeholder="Notes" rows={2} className="w-full border rounded px-2 py-1 text-sm" value={resultForm.notes ?? ""} onChange={(e) => setResultForm({ ...resultForm, notes: e.target.value })} />
+                              <div className="flex gap-2">
+                                <Button size="sm" variant="outline" onClick={() => setExpandedResultId(null)} className="flex-1">Cancel</Button>
+                                <Button size="sm" className="flex-1" onClick={async () => {
+                                  if (!resultForm.homeScore || !resultForm.awayScore) return toast({ title: "Enter scores", variant: "destructive" });
+                                  const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
+                                  await setDoc(doc(db, "results", apt.id), { ...apt, resultSubmitted: true, resultSummary: summary, ...resultForm }, { merge: true });
+                                  await updateDoc(doc(db, "appointments", apt.id), { resultSubmitted: true, resultSummary: summary, auditTrail: arrayUnion({ by: currentRefereeEmail, action: "Result", details: summary, timestamp: new Date().toISOString() }) });
+                                  toast({ title: "Result saved" });
+                                  setExpandedResultId(null);
+                                  setResultForm({});
+                                }}>Save</Button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
                       </div>
-                      <p className="text-gray-600">{apt.date} • {apt.time} • {apt.venue}</p>
-                      <p className="text-sm text-gray-600">{apt.gameType?.toUpperCase()} • {apt.game}</p>
-                      <p className="mt-2 text-sm font-medium text-emerald-700">
-                        Your Role: {yourRole} ({yourName})
-                      </p>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-                      {/* Reports Submitted */}
-                      {hasReport && (
-                        <div className="mt-2 flex gap-1 flex-wrap">
-                          {matchReport.reports.map((r: any) => (
-                            <Badge key={r.id} variant={r.reviewed ? "success" : "warning"} className="text-xs">
-                              {r.type.replace("_", " ")} {r.reviewed ? "Reviewed" : "Pending"}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Audit Trail */}
-                      {((apt.auditTrail?.length > 0 || matchReport?.auditTrail?.length > 0)) && (
-                        <div className="mt-3 bg-gray-50 border rounded p-2">
-                          <p className="font-medium text-sm text-gray-700 mb-1">Audit Trail:</p>
-                          <ul className="text-xs text-gray-600 space-y-1 max-h-32 overflow-y-auto">
-                            {[...(apt.auditTrail || []), ...(matchReport?.auditTrail || [])]
-                              .sort((a: any, b: any) => new Date(a.timestamp) - new Date(b.timestamp))
-                              .map((log: any, i: number) => (
-                                <li key={i}>
-                                  <span className="font-semibold text-gray-800">{log.by}</span> — {log.action}: {log.details}{" "}
-                                  <span className="text-gray-400">
-                                    ({new Date(log.timestamp).toLocaleString()})
-                                  </span>
-                                </li>
-                              ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {/* Actions */}
-                      {status === "pending" && (
-                        <div className="mt-3 flex gap-2">
-                          <Button size="sm" className="bg-green-600 text-white" onClick={() => handleResponse(apt.id, "accepted", apt._role)}>
-                            Accept
-                          </Button>
-                          <Button size="sm" className="bg-red-500 text-white" onClick={() => handleResponse(apt.id, "rejected", apt._role)}>
-                            Decline
-                          </Button>
-                        </div>
-                      )}
-
-                      {status === "accepted" && (
-                        <div className="mt-3 flex gap-2 flex-wrap">
-                          {/* Report Button – Always visible after accept */}
-                          {!hasReport ? (
-                            <Button
-                              size="sm"
-                              className="bg-blue-600 text-white"
-                              onClick={() => setShowReportCenter(apt.id)}
-                            >
-                              Submit Report
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setActiveReportId(matchReport.reports[0].id)}
-                            >
-                              View Report
-                            </Button>
-                          )}
-
-                          <Button
-                            size="sm"
-                            className="bg-emerald-600 text-white"
-                            onClick={() => setExpandedResultId(isExpanded ? null : apt.id)}
-                          >
-                            {apt.resultSubmitted ? "Edit Result" : "Submit Result"}
-                          </Button>
-                        </div>
-                      )}
-
-                      {apt.resultSubmitted && !isExpanded && (
-                        <p className="mt-2 text-emerald-700 font-medium">{apt.resultSummary}</p>
-                      )}
+          {/* Reports */}
+          <div>
+            <h3 className="text-xl sm:text-2xl font-bold mb-3">My Reports</h3>
+            {reports.length === 0 ? (
+              <p className="text-center py-6 text-gray-500">No reports yet.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {reports.map((group: any) => (
+                  <Card key={group.matchId} className="p-4 cursor-pointer hover:shadow-md transition" onClick={() => setActiveReportId(group.reports[0].id)}>
+                    <div className="flex justify-between mb-2">
+                      <div className="flex gap-1 flex-wrap">
+                        {group.reports.map((r: any) => (
+                          <Badge key={r.id} variant={r.reviewed ? "success" : "warning"} className="text-xs">
+                            {r.type.replace("_", " ")}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-
-                  {/* Result Form */}
-                  {isExpanded && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 border-t pt-3">
-                      <h4 className="font-semibold mb-2">Enter Match Result</h4>
-                      <div className="grid sm:grid-cols-2 gap-3 mb-3">
-                        <input type="number" placeholder="Home score" className="border rounded px-2 py-1"
-                          value={resultForm.homeScore ?? apt.homeScore ?? ""} onChange={(e) => setResultForm({ ...resultForm, homeScore: e.target.value })} />
-                        <input type="number" placeholder="Away score" className="border rounded px-2 py-1"
-                          value={resultForm.awayScore ?? apt.awayScore ?? ""} onChange={(e) => setResultForm({ ...resultForm, awayScore: e.target.value })} />
-                      </div>
-                      <input type="text" placeholder="Player of the match" className="border w-full rounded px-2 py-1 mb-2"
-                        value={resultForm.playerOfMatch ?? apt.playerOfMatch ?? ""} onChange={(e) => setResultForm({ ...resultForm, playerOfMatch: e.target.value })} />
-                      <textarea placeholder="Notes" rows={3} className="border w-full rounded px-2 py-1"
-                        value={resultForm.notes ?? apt.notes ?? ""} onChange={(e) => setResultForm({ ...resultForm, notes: e.target.value })} />
-                      <div className="flex justify-end gap-2 mt-3">
-                        <Button variant="outline" onClick={() => setExpandedResultId(null)}>
-                          Cancel
-                        </Button>
-                        <Button className="bg-blue-600 text-white" onClick={async () => {
-                          try {
-                            if (!resultForm.homeScore || !resultForm.awayScore) {
-                              toast({ title: "Incomplete", description: "Enter both scores.", variant: "destructive" });
-                              return;
-                            }
-
-                            const summary = `${apt.homeTeam} ${resultForm.homeScore} - ${resultForm.awayScore} ${apt.awayTeam}`;
-                            const resultData = {
-                              resultSubmitted: true,
-                              homeScore: Number(resultForm.homeScore),
-                              awayScore: Number(resultForm.awayScore),
-                              playerOfMatch: resultForm.playerOfMatch || "",
-                              notes: resultForm.notes || "",
-                              resultSummary: summary,
-                              updatedAt: serverTimestamp(),
-                            };
-
-                            await setDoc(doc(db, "results", apt.id), {
-                              ...apt,
-                              ...resultData,
-                              appointmentId: apt.id,
-                              refereeId: currentRefereeId,
-                              refereeEmail: currentRefereeEmail,
-                              createdAt: apt.createdAt || serverTimestamp(),
-                            }, { merge: true });
-
-                            const aptRef = doc(db, "appointments", apt.id);
-                            const auditEntry = {
-                              by: currentRefereeEmail,
-                              action: "Result Submitted",
-                              details: summary,
-                              playerOfMatch: resultForm.playerOfMatch || "N/A",
-                              timestamp: new Date().toISOString(),
-                            };
-
-                            await updateDoc(aptRef, {
-                              ...resultData,
-                              auditTrail: arrayUnion(auditEntry),
-                            });
-
-                            toast({ title: "Result saved", description: summary });
-                            setExpandedResultId(null);
-                            setResultForm({});
-                          } catch (e) {
-                            console.error("Result error:", e);
-                            toast({ title: "Error", description: "Failed to save result.", variant: "destructive" });
-                          }
-                        }}>
-                          Save
-                        </Button>
-                      </div>
-                    </motion.div>
-                  )}
-                </Card>
-              );
-            })}
+                    <p className="font-medium">{group.matchDisplay}</p>
+                    <p className="text-xs text-gray-500 mt-1">{group.auditTrail.length} audit actions</p>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* UNIFIED REPORT CENTER MODAL */}
+      {/* Full-Screen Modals */}
       {showReportCenter && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
             <RefereeUnifiedReportCenter
               appointmentId={showReportCenter}
               onClose={() => setShowReportCenter(null)}
-              onSuccess={() => {
-                toast({ title: "Report Submitted" });
-                setShowReportCenter(null);
-              }}
+              onSuccess={() => { toast({ title: "Report submitted" }); setShowReportCenter(null); }}
             />
           </div>
         </div>
       )}
 
-      {/* MY REPORTS SECTION */}
-      <div>
-        <h3 className="text-2xl font-bold mb-4">My Reports</h3>
-        {reports.length === 0 ? (
-          <p className="text-center text-gray-500">No reports yet.</p>
-        ) : (
-          <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {reports.map((group: any) => (
-              <Card
-                key={group.matchId}
-                className="p-4 bg-white border rounded-xl shadow hover:shadow-lg cursor-pointer transition"
-                onClick={() => setActiveReportId(group.reports[0]?.id)}
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex gap-1 flex-wrap">
-                    {group.reports.map((r: any) => (
-                      <Badge key={r.id} variant={r.reviewed ? "success" : "warning"} className="text-xs">
-                        {r.type.replace("_", " ")} {r.reviewed ? "Reviewed" : "Pending"}
-                      </Badge>
-                    ))}
-                  </div>
-                  {group.reports.some((r: any) => r.reviewed) && (
-                    <span className="text-xs text-gray-500">
-                      Reviewed {group.reports.filter((r: any) => r.reviewed).length}/{group.reports.length}
-                    </span>
-                  )}
-                </div>
-                <p className="font-semibold text-gray-900">{group.matchDisplay}</p>
-                <p className="text-sm text-gray-600">Audit: {group.auditTrail.length} actions</p>
-                <p className="text-gray-500 text-sm">{group.reports.length} report{group.reports.length > 1 ? 's' : ''}</p>
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* REPORT DETAIL + EDIT MODAL */}
       {activeReportId && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={() => setActiveReportId(null)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <ReportDetailModal
-              reportId={activeReportId}
-              onClose={() => setActiveReportId(null)}
-              onSave={() => {
-                toast({ title: "Saved", description: "Report updated successfully." });
-                setActiveReportId(null);
-              }}
-            />
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setActiveReportId(null)}>
+          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+            <ReportDetailModal reportId={activeReportId} onClose={() => setActiveReportId(null)} onSave={() => { toast({ title: "Saved" }); setActiveReportId(null); }} />
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
