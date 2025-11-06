@@ -30,6 +30,7 @@ import {
   Menu, X, LogOut, Camera, CheckCircle, AlertCircle, Clock, FileText, Trophy,
   ChevronDown, MessageSquare, Edit3, CheckCircle2 
 } from "lucide-react";
+import { LawsOfTheGameWidget } from "../LawsOfTheGameWidget";
 
 export const RefereeDashboard: React.FC = () => {
   const [appointments, setAppointments] = useState<any[]>([]);
@@ -448,6 +449,9 @@ export const RefereeDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Floating Laws Widget */}
+    <LawsOfTheGameWidget />
     </>
   );
 };
