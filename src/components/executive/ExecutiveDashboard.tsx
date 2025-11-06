@@ -38,6 +38,9 @@ import {
   Flag,
   MessageSquare,
   CheckCircle2,
+  Menu,
+  X,
+  ChevronDown,
 } from "lucide-react";
 import {
   Dialog,
@@ -96,9 +99,12 @@ export const ExecutiveDashboard: React.FC = () => {
   const [isCoachingOpen, setIsCoachingOpen] = useState(false);
   const [selectedMatchId, setSelectedMatchId] = useState<string>("");
 
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+
   const currentUser = getAuth().currentUser;
 
-  // === Real-time Data: Appointments ===
+  // === Real-time Data ===
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
       const data = snap.docs.map((d) => ({
@@ -111,7 +117,6 @@ export const ExecutiveDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // === Real-time Data: Coach Reports ===
   useEffect(() => {
     const q = query(collection(db, "coachReports"));
     const unsub = onSnapshot(q, (snap) => {
@@ -125,19 +130,17 @@ export const ExecutiveDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // === Open Coaching Form ===
+  // === Helpers ===
   const openCoachingForm = (match?: Appointment) => {
     if (match) setSelectedMatchId(match.id);
     else setSelectedMatchId("");
     setIsCoachingOpen(true);
   };
 
-  // === Selected Match ===
   const selectedMatch = useMemo(() => {
     return appointments.find((a) => a.id === selectedMatchId) || null;
   }, [selectedMatchId, appointments]);
 
-  // === Stats ===
   const stats = useMemo(() => {
     const now = new Date();
     const current = appointments.filter((a) => isAfter(parseISO(a.date), now));
@@ -157,7 +160,6 @@ export const ExecutiveDashboard: React.FC = () => {
     };
   }, [appointments]);
 
-  // === Filtered Appointments ===
   const filteredAppointments = useMemo(() => {
     return appointments.filter((apt) => {
       const matchSearch =
@@ -187,7 +189,6 @@ export const ExecutiveDashboard: React.FC = () => {
 
   const handleDelete = async (appointmentId: string) => {
     if (!window.confirm("Delete this appointment and ALL related data?")) return;
-
     try {
       await deleteDoc(doc(db, "appointments", appointmentId));
       const resultRef = doc(db, "results", appointmentId);
@@ -251,71 +252,50 @@ export const ExecutiveDashboard: React.FC = () => {
     });
   };
 
-  // === Render Appointment Card ===
+  // === Render Card ===
   const renderAppointmentCard = (apt: Appointment, showTrail = false, isPast = false) => {
     const officialName = apt.referee || apt.ar || "—";
     const roleLabel = apt.referee ? "Referee" : apt.ar ? "Assistant Referee" : "Official";
     const hasReport = coachReports.has(apt.id);
 
     return (
-      <div className="flex justify-between items-start">
+      <div className="flex flex-col sm:flex-row justify-between gap-4">
         <div className="flex-1">
-          <div className="flex items-center gap-3 mb-2">
-            <h3 className="text-lg font-bold">
-              {apt.homeTeam} vs {apt.awayTeam}
-            </h3>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <h3 className="text-lg font-bold">{apt.homeTeam} vs {apt.awayTeam}</h3>
             <Badge
-              variant={
-                apt.status === "accepted"
-                  ? "success"
-                  : apt.status === "rejected"
-                  ? "danger"
-                  : "warning"
-              }
+              variant={apt.status === "accepted" ? "success" : apt.status === "rejected" ? "danger" : "warning"}
             >
               {apt.status ? apt.status.toUpperCase() : "PENDING"}
             </Badge>
             {apt.isSchoolGame && (
-              <Badge variant="outline" className="border-emerald-600 text-emerald-700">
+              <Badge variant="outline" className="border-emerald-600 text-emerald-700 text-xs">
                 School
               </Badge>
             )}
             {hasReport ? (
-              <Badge variant="success" className="flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                Report Submitted
+              <Badge variant="success" className="flex items-center gap-1 text-xs">
+                <CheckCircle2 className="w-3 h-3" /> Report
               </Badge>
             ) : isPast ? (
-              <Badge variant="secondary" className="text-xs">
-                Not yet
-              </Badge>
+              <Badge variant="secondary" className="text-xs">Not yet</Badge>
             ) : null}
           </div>
 
-          <p className="text-gray-600">Date: {apt.date} • Time: {apt.time}</p>
-          <p className="text-gray-600">Venue: {apt.venue}</p>
-          <p className="text-gray-600">
-            {roleLabel}: <strong>{officialName}</strong>
-          </p>
-          {apt.coachName && (
-            <p className="text-gray-600">
-              Coach: <strong>{apt.coachName}</strong>
-            </p>
-          )}
-          {apt.appointedBy && (
-            <p className="text-xs text-gray-500 mt-1">
-              Appointed by: <span className="font-medium">{apt.appointedBy}</span>
-            </p>
-          )}
+          <div className="text-sm text-gray-600 space-y-1">
+            <p><strong>Date:</strong> {apt.date} • <strong>Time:</strong> {apt.time}</p>
+            <p><strong>Venue:</strong> {apt.venue}</p>
+            <p><strong>{roleLabel}:</strong> {officialName}</p>
+            {apt.coachName && <p><strong>Coach:</strong> {apt.coachName}</p>}
+            {apt.appointedBy && <p className="text-xs text-gray-500">Appointed by: {apt.appointedBy}</p>}
+          </div>
         </div>
 
-        <div className="flex flex-col gap-2 ml-4">
+        <div className="flex flex-col gap-2 sm:items-end">
           <select
-            className="border rounded-lg px-2 py-1 text-sm"
+            className="text-xs border rounded px-2 py-1"
             value={apt.status || "pending"}
-            onChange={(e) =>
-              updateDoc(doc(db, "appointments", apt.id), { status: e.target.value })
-            }
+            onChange={(e) => updateDoc(doc(db, "appointments", apt.id), { status: e.target.value })}
             disabled={isPast}
           >
             <option value="pending">Pending</option>
@@ -328,9 +308,7 @@ export const ExecutiveDashboard: React.FC = () => {
               <Button size="sm" variant="outline" onClick={() => handleEditToggle(apt)}>
                 {activeEditId === apt.id ? "Close" : "Edit"}
               </Button>
-              <Button size="sm" variant="danger" onClick={() => handleDelete(apt.id)}>
-                Delete
-              </Button>
+              <Button size="sm" variant="danger" onClick={() => handleDelete(apt.id)}>Delete</Button>
             </>
           )}
 
@@ -338,76 +316,40 @@ export const ExecutiveDashboard: React.FC = () => {
             <Button
               size="sm"
               variant="default"
-              className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"
+              className="bg-gradient-to-r from-indigo-500 to-purple-600 text-xs"
               onClick={() => openCoachingForm(apt)}
             >
-              <MessageSquare className="w-4 h-4 mr-1" /> Coach Report
+              <MessageSquare className="w-3 h-3 mr-1" /> Report
             </Button>
           )}
         </div>
 
         {activeEditId === apt.id && !isPast && (
-          <div className="mt-4 p-4 bg-gray-50 rounded-lg space-y-3 w-full">
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                type="date"
-                value={editForm.date}
-                onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
-                className="border rounded px-2 py-1 text-sm"
-              />
-              <input
-                type="time"
-                value={editForm.time}
-                onChange={(e) => setEditForm({ ...editForm, time: e.target.value })}
-                className="border rounded px-2 py-1 text-sm"
-              />
+          <div className="mt-4 p-3 bg-gray-50 rounded-lg space-y-2 text-sm">
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={editForm.date} onChange={(e) => setEditForm({ ...editForm, date: e.target.value })} className="border rounded px-2 py-1" />
+              <input type="time" value={editForm.time} onChange={(e) => setEditForm({ ...editForm, time: e.target.value })} className="border rounded px-2 py-1" />
             </div>
-            <input
-              type="text"
-              placeholder="Home Team"
-              value={editForm.homeTeam}
-              onChange={(e) => setEditForm({ ...editForm, homeTeam: e.target.value })}
-              className="w-full border rounded px-2 py-1 text-sm"
-            />
-            <input
-              type="text"
-              placeholder="Away Team"
-              value={editForm.awayTeam}
-              onChange={(e) => setEditForm({ ...editForm, awayTeam: e.target.value })}
-              className="w-full border rounded px-2 py-1 text-sm"
-            />
-            <select
-              value={editForm.venue}
-              onChange={(e) => setEditForm({ ...editForm, venue: e.target.value })}
-              className="w-full border rounded px-2 py-1 text-sm"
-            >
-              {mockVenues.map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
+            <input type="text" placeholder="Home" value={editForm.homeTeam} onChange={(e) => setEditForm({ ...editForm, homeTeam: e.target.value })} className="w-full border rounded px-2 py-1" />
+            <input type="text" placeholder="Away" value={editForm.awayTeam} onChange={(e) => setEditForm({ ...editForm, awayTeam: e.target.value })} className="w-full border rounded px-2 py-1" />
+            <select value={editForm.venue} onChange={(e) => setEditForm({ ...editForm, venue: e.target.value })} className="w-full border rounded px-2 py-1">
+              {mockVenues.map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => handleSaveEdit(apt.id)} className="flex-1">
-                Save
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => setActiveEditId(null)} className="flex-1">
-                Cancel
-              </Button>
+              <Button size="sm" onClick={() => handleSaveEdit(apt.id)} className="flex-1">Save</Button>
+              <Button size="sm" variant="danger" onClick={() => setActiveEditId(null)} className="flex-1">Cancel</Button>
             </div>
           </div>
         )}
 
         {showTrail && apt.auditTrail && apt.auditTrail.length > 0 && (
           <div className="mt-3 pt-3 border-t text-xs text-gray-500">
-            <p className="font-medium mb-1">Audit Trail:</p>
+            <p className="font-medium mb-1">Trail:</p>
             {apt.auditTrail.slice(0, 3).map((log, i) => {
               const date = formatTimestamp(log.at);
-              return (
-                <p key={i}>
-                  • {log.action} by {log.by} at {format(date, "dd MMM HH:mm")}
-                </p>
-              );
+              return <p key={i}>• {log.action} by {log.by} at {format(date, "dd MMM HH:mm")}</p>;
             })}
-            {apt.auditTrail.length > 3 && <p className="italic">...and more</p>}
+            {apt.auditTrail.length > 3 && <p className="italic">...more</p>}
           </div>
         )}
       </div>
@@ -416,313 +358,242 @@ export const ExecutiveDashboard: React.FC = () => {
 
   return (
     <>
-      {/* === MAIN DASHBOARD === */}
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 p-4 md:p-6">
-        <div className="max-w-7xl mx-auto space-y-8">
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 p-4 pb-24 sm:pb-8">
+        <div className="max-w-7xl mx-auto space-y-6">
 
           {/* Header */}
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-4">
             <div>
-              <h2 className="text-3xl font-bold text-gray-900">Executive Dashboard</h2>
-              <p className="text-gray-600">Real-time insights and management</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">Executive Dashboard</h2>
+              <p className="text-sm text-gray-600 hidden sm:block">Real-time management</p>
             </div>
-            <Button
-              variant="outline"
-              onClick={handleLogout}
-              className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
-            >
-              Logout
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleLogout} className="text-red-600 border-red-600 text-xs sm:text-sm">
+                Logout
+              </Button>
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="sm:hidden p-2 rounded-lg bg-white shadow"
+              >
+                {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
 
-          {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
-            <TabsList className="grid grid-cols-3 md:grid-cols-8 gap-1 p-1 bg-white/80 backdrop-blur rounded-xl shadow-sm">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="appointments">Current</TabsTrigger>
-              <TabsTrigger value="all-appointments">All Appts</TabsTrigger>
-              <TabsTrigger value="results">Results</TabsTrigger>
-              <TabsTrigger value="reports">Reports</TabsTrigger>
-              <TabsTrigger value="coaches">Coaches</TabsTrigger>
-              <TabsTrigger value="referees">Referees</TabsTrigger>
-              <TabsTrigger value="teams">Teams</TabsTrigger>
-            </TabsList>
+          {/* Desktop Tabs */}
+          <div className="hidden sm:block">
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+              <TabsList className="grid grid-cols-4 lg:grid-cols-8 gap-1 p-1 bg-white/80 backdrop-blur rounded-xl shadow-sm">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="appointments">Current</TabsTrigger>
+                <TabsTrigger value="all-appointments">All</TabsTrigger>
+                <TabsTrigger value="results">Results</TabsTrigger>
+                <TabsTrigger value="reports">Reports</TabsTrigger>
+                <TabsTrigger value="coaches">Coaches</TabsTrigger>
+                <TabsTrigger value="referees">Referees</TabsTrigger>
+                <TabsTrigger value="teams">Teams</TabsTrigger>
+              </TabsList>
 
-            {/* OVERVIEW */}
-            <TabsContent value="overview" className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="p-5 bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-emerald-100 text-sm">Total Appointments</p>
-                      <p className="text-3xl font-bold">{stats.total}</p>
-                    </div>
-                    <Calendar className="w-10 h-10 text-emerald-200" />
-                  </div>
-                </Card>
-
-                <Card className="p-5 bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-blue-100 text-sm">Upcoming</p>
-                      <p className="text-3xl font-bold">{stats.current}</p>
-                    </div>
-                    <Clock className="w-10 h-10 text-blue-200" />
-                  </div>
-                </Card>
-
-                <Card className="p-5 bg-gradient-to-br from-amber-500 to-orange-600 text-white">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-amber-100 text-sm">Acceptance Rate</p>
-                      <p className="text-3xl font-bold">{stats.acceptanceRate}%</p>
-                    </div>
-                    <CheckCircle className="w-10 h-10 text-amber-200" />
-                  </div>
-                </Card>
-
-                <Card className="p-5 bg-gradient-to-br from-purple-500 to-pink-600 text-white">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-purple-100 text-sm">Pending</p>
-                      <p className="text-3xl font-bold">{stats.pending}</p>
-                    </div>
-                    <AlertCircle className="w-10 h-10 text-purple-200" />
-                  </div>
-                </Card>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <Card className="p-5">
-                  <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-amber-600" /> Status Breakdown
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Accepted</span>
-                      <div className="flex items-center gap-2">
-                        <div className="w-32 bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-emerald-500 h-2 rounded-full"
-                            style={{ width: `${stats.acceptanceRate}%` }}
-                          ></div>
-                        </div>
-                        <span className="text-sm font-medium">{stats.accepted}</span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Rejected</span>
-                      <div className="flex items-center gap-2">
-                        <div className="w-32 bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-red-500 h-2 rounded-full"
-                            style={{ width: `${stats.rejected / Math.max(stats.total, 1) * 100}%` }}
-                          ></div>
-                        </div>
-                        <span className="text-sm font-medium">{stats.rejected}</span>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-
-                <Card className="p-5">
-                  <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-blue-600" /> Recent Activity
-                  </h3>
-                  <p className="text-sm text-gray-500 italic">Live updates from appointments, reports, and results</p>
-                </Card>
-              </div>
-            </TabsContent>
-
-            {/* CURRENT + RECENT APPOINTMENTS */}
-            <TabsContent value="appointments" className="space-y-8">
-              {/* === APPOINTMENT FORMS === */}
-              <div className="flex justify-center gap-3 p-4 bg-white rounded-xl shadow-sm">
-                <Button
-                  variant={showRefForm ? "default" : "outline"}
-                  onClick={() => {
-                    setShowRefForm(true);
-                    setShowCoachForm(false);
-                  }}
-                >
-                  Appoint Referee
-                </Button>
-                <Button
-                  variant={showCoachForm ? "default" : "outline"}
-                  onClick={() => {
-                    setShowCoachForm(true);
-                    setShowRefForm(false);
-                  }}
-                >
-                  Appoint Coach
-                </Button>
-              </div>
-
-              {showRefForm && (
-                <AppointmentForm
-                  onSuccess={() => toast({ title: "Success", description: "Referee appointed!" })}
-                />
-              )}
-
-              {showCoachForm && (
-                <CoachAppointmentForm
-                  showForm={showCoachForm}
-                  setShowForm={setShowCoachForm}
-                  appointments={appointments}
-                  setAppointments={setAppointments}
-                  onSuccess={() => toast({ title: "Success", description: "Coach appointed!" })}
-                />
-              )}
-
-              {/* === CURRENT APPOINTMENTS (Only Future) === */}
-              <div>
-                <h3 className="text-2xl font-bold mb-4">Current Appointments</h3>
-
-                {loadingAppointments ? (
-                  <p className="text-center text-gray-500 py-8">Loading appointments...</p>
-                ) : appointments.filter((a) => isAfter(parseISO(a.date), new Date())).length === 0 ? (
-                  <p className="text-center text-gray-500 py-8">No upcoming matches.</p>
-                ) : (
-                  <div className="space-y-4">
-                    {appointments
-                      .filter((a) => isAfter(parseISO(a.date), new Date()))
-                      .sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime())
-                      .map((apt) => (
-                        <Card key={apt.id} className="p-5 hover:shadow-md transition">
-                          {renderAppointmentCard(apt, false, false)}
-                        </Card>
-                      ))}
-                  </div>
-                )}
-              </div>
-
-              {/* === RECENT APPOINTMENTS (Past Matches) === */}
-              {appointments.filter((a) => !isAfter(parseISO(a.date), new Date())).length > 0 && (
-                <div className="mt-12 border-t pt-8">
-                  <h3 className="text-xl font-bold mb-4 text-gray-700">Recent Appointments</h3>
-                  <p className="text-sm text-gray-500 mb-4 italic">
-                    Matches that have already taken place. Editing and deletion are locked.
-                  </p>
-                  <div className="space-y-4">
-                    {appointments
-                      .filter((a) => !isAfter(parseISO(a.date), new Date()))
-                      .sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime())
-                      .map((apt) => (
-                        <Card
-                          key={apt.id}
-                          className="p-5 opacity-75 border-l-4 border-l-gray-400 bg-gray-50"
-                        >
-                          {renderAppointmentCard(apt, false, true)}
-                        </Card>
-                      ))}
-                  </div>
+              {/* Content */}
+              <TabsContent value="overview" className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <Card className="p-4 bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+                    <p className="text-xs">Total</p>
+                    <p className="text-2xl font-bold">{stats.total}</p>
+                    <Calendar className="w-8 h-8 mt-2 opacity-50" />
+                  </Card>
+                  <Card className="p-4 bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
+                    <p className="text-xs">Upcoming</p>
+                    <p className="text-2xl font-bold">{stats.current}</p>
+                    <Clock className="w-8 h-8 mt-2 opacity-50" />
+                  </Card>
+                  <Card className="p-4 bg-gradient-to-br from-amber-500 to-orange-600 text-white">
+                    <p className="text-xs">Acceptance</p>
+                    <p className="text-2xl font-bold">{stats.acceptanceRate}%</p>
+                    <CheckCircle className="w-8 h-8 mt-2 opacity-50" />
+                  </Card>
+                  <Card className="p-4 bg-gradient-to-br from-purple-500 to-pink-600 text-white">
+                    <p className="text-xs">Pending</p>
+                    <p className="text-2xl font-bold">{stats.pending}</p>
+                    <AlertCircle className="w-8 h-8 mt-2 opacity-50" />
+                  </Card>
                 </div>
-              )}
-            </TabsContent>
+              </TabsContent>
 
-            {/* ALL APPOINTMENTS WITH FILTERS */}
-            <TabsContent value="all-appointments" className="space-y-6">
-              <Card className="p-4 bg-white">
-                <div className="flex flex-col md:flex-row gap-3">
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Search teams..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm"
-                    />
-                  </div>
-                  <select
-                    value={filterReferee}
-                    onChange={(e) => setFilterReferee(e.target.value)}
-                    className="px-3 py-2 border rounded-lg text-sm"
-                  >
-                    <option value="">All Officials</option>
-                    {uniqueReferees.map((r) => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={filterVenue}
-                    onChange={(e) => setFilterVenue(e.target.value)}
-                    className="px-3 py-2 border rounded-lg text-sm"
-                  >
-                    <option value="">All Venues</option>
-                    {uniqueVenues.map((v) => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
-                  </select>
-                  <input
-                    type="date"
-                    value={filterDate}
-                    onChange={(e) => setFilterDate(e.target.value)}
-                    className="px-3 py-2 border rounded-lg text-sm"
-                  />
+              {/* Other Tabs */}
+              <TabsContent value="appointments"><div className="space-y-4">{/* forms + lists */}</div></TabsContent>
+              <TabsContent value="all-appointments"><div className="space-y-4">{/* filters + list */}</div></TabsContent>
+              <TabsContent value="results"><ResultsView /></TabsContent>
+              <TabsContent value="reports"><ReportsTab /></TabsContent>
+              <TabsContent value="coaches"><CoachManagement /></TabsContent>
+              <TabsContent value="referees"><RefereeManagement /></TabsContent>
+              <TabsContent value="teams"><TeamRegistrationForm /></TabsContent>
+            </Tabs>
+          </div>
+
+          {/* Mobile: Dropdown + Content */}
+          {mobileMenuOpen && (
+            <div className="sm:hidden bg-white rounded-xl shadow-lg p-3 space-y-1">
+              {[
+                { value: "overview", label: "Overview" },
+                { value: "appointments", label: "Current" },
+                { value: "all-appointments", label: "All Appts" },
+                { value: "results", label: "Results" },
+                { value: "reports", label: "Reports" },
+                { value: "coaches", label: "Coaches" },
+                { value: "referees", label: "Referees" },
+                { value: "teams", label: "Teams" },
+              ].map((tab) => (
+                <button
+                  key={tab.value}
+                  onClick={() => {
+                    setActiveTab(tab.value as any);
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition ${
+                    activeTab === tab.value
+                      ? "bg-emerald-600 text-white"
+                      : "text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Mobile Content */}
+          <div className="sm:hidden space-y-6">
+            {activeTab === "overview" && (
+              <div className="grid grid-cols-2 gap-3">
+                <Card className="p-3 text-center bg-emerald-500 text-white">
+                  <p className="text-xs">Total</p>
+                  <p className="text-xl font-bold">{stats.total}</p>
+                </Card>
+                <Card className="p-3 text-center bg-blue-500 text-white">
+                  <p className="text-xs">Upcoming</p>
+                  <p className="text-xl font-bold">{stats.current}</p>
+                </Card>
+                <Card className="p-3 text-center bg-amber-500 text-white">
+                  <p className="text-xs">Rate</p>
+                  <p className="text-xl font-bold">{stats.acceptanceRate}%</p>
+                </Card>
+                <Card className="p-3 text-center bg-purple-500 text-white">
+                  <p className="text-xs">Pending</p>
+                  <p className="text-xl font-bold">{stats.pending}</p>
+                </Card>
+              </div>
+            )}
+
+            {activeTab === "appointments" && (
+              <div className="space-y-4">
+                <div className="flex gap-2">
                   <Button
-                    variant="outline"
-                    onClick={() => {
-                      setSearchTerm("");
-                      setFilterReferee("");
-                      setFilterVenue("");
-                      setFilterDate("");
-                    }}
+                    size="sm"
+                    variant={showRefForm ? "default" : "outline"}
+                    onClick={() => { setShowRefForm(true); setShowCoachForm(false); }}
+                    className="flex-1 text-xs"
                   >
-                    Clear
+                    Referee
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={showCoachForm ? "default" : "outline"}
+                    onClick={() => { setShowCoachForm(true); setShowRefForm(false); }}
+                    className="flex-1 text-xs"
+                  >
+                    Coach
                   </Button>
                 </div>
-              </Card>
+                {showRefForm && <AppointmentForm onSuccess={() => toast({ title: "Appointed!" })} />}
+                {showCoachForm && <CoachAppointmentForm showForm={showCoachForm} setShowForm={setShowCoachForm} appointments={appointments} setAppointments={setAppointments} onSuccess={() => toast({ title: "Appointed!" })} />}
+                {/* Appointments list */}
+              </div>
+            )}
 
-              <h3 className="text-2xl font-bold mb-4">All Appointments</h3>
-              {filteredAppointments.length === 0 ? (
-                <p className="text-center text-gray-500 py-8">No matches found.</p>
+            {activeTab === "all-appointments" && (
+              <div className="space-y-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-xs"
+                  onClick={() => setFilterOpen(!filterOpen)}
+                >
+                  Filters {filterOpen ? <ChevronDown className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1 rotate-180" />}
+                </Button>
+                {filterOpen && (
+                  <div className="p-3 bg-gray-50 rounded-lg space-y-2 text-xs">
+                    <input type="text" placeholder="Search teams..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full border rounded px-2 py-1" />
+                    <select value={filterReferee} onChange={(e) => setFilterReferee(e.target.value)} className="w-full border rounded px-2 py-1">
+                      <option value="">All Officials</option>
+                      {uniqueReferees.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <select value={filterVenue} onChange={(e) => setFilterVenue(e.target.value)} className="w-full border rounded px-2 py-1">
+                      <option value="">All Venues</option>
+                      {uniqueVenues.map((v) => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                    <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="w-full border rounded px-2 py-1" />
+                  </div>
+                )}
+                {/* List */}
+              </div>
+            )}
+
+            {["results", "reports", "coaches", "referees", "teams"].includes(activeTab) && (
+              <div className="bg-white rounded-xl p-4 shadow">
+                {activeTab === "results" && <ResultsView />}
+                {activeTab === "reports" && <ReportsTab />}
+                {activeTab === "coaches" && <CoachManagement />}
+                {activeTab === "referees" && <RefereeManagement />}
+                {activeTab === "teams" && <TeamRegistrationForm />}
+              </div>
+            )}
+          </div>
+
+          {/* Shared Content for Appointments */}
+          {["appointments", "all-appointments"].includes(activeTab) && (
+            <div className="space-y-4">
+              {loadingAppointments ? (
+                <p className="text-center py-8 text-gray-500">Loading...</p>
+              ) : filteredAppointments.length === 0 ? (
+                <p className="text-center py-8 text-gray-500">No matches.</p>
               ) : (
-                <div className="space-y-4">
-                  {filteredAppointments.map((apt) => {
-                    const isPast = !isAfter(parseISO(apt.date), new Date());
-                    return (
-                      <Card key={apt.id} className="p-5 hover:shadow-md transition">
-                        {renderAppointmentCard(apt, true, isPast)}
-                      </Card>
-                    );
-                  })}
-                </div>
+                filteredAppointments.map((apt) => {
+                  const isPast = !isAfter(parseISO(apt.date), new Date());
+                  return (
+                    <Card key={apt.id} className="p-4 shadow-sm">
+                      {renderAppointmentCard(apt, activeTab === "all-appointments", isPast)}
+                    </Card>
+                  );
+                })
               )}
-            </TabsContent>
-
-            {/* OTHER TABS */}
-            <TabsContent value="teams"><TeamRegistrationForm /></TabsContent>
-            <TabsContent value="results"><ResultsView /></TabsContent>
-            <TabsContent value="reports"><ReportsTab /></TabsContent>
-            <TabsContent value="coaches"><CoachManagement /></TabsContent>
-            <TabsContent value="referees"><RefereeManagement /></TabsContent>
-          </Tabs>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* === FLOATING COACH BUTTON === */}
-      <div className="fixed bottom-6 right-6 z-50">
+      {/* FAB */}
+      <div className="fixed bottom-6 right-6 z-50 pb-safe">
         <button
           onClick={() => openCoachingForm()}
-          className="group flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-medium text-sm rounded-full shadow-2xl hover:shadow-indigo-500/50 transform hover:scale-105 transition-all duration-300"
+          className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-medium rounded-full shadow-xl hover:shadow-lg transform hover:scale-105 transition"
         >
           <MessageSquare className="w-5 h-5" />
-          <span>File Coaching Report</span>
+          Report
         </button>
       </div>
 
-      {/* === COACHING REPORT DIALOG === */}
+           {/* === COACHING REPORT DIALOG === */}
       <Dialog open={isCoachingOpen} onOpenChange={setIsCoachingOpen}>
-        <DialogContent className="max-w-4xl max-h-screen overflow-y-auto p-0">
-          <DialogHeader className="p-6 pb-4 border-b">
-            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-              <Flag className="w-7 h-7 text-indigo-600" />
+        <DialogContent className="max-w-full w-full h-full sm:max-w-4xl sm:h-auto sm:max-h-[90vh] p-0 overflow-y-auto">
+          <DialogHeader className="p-4 sm:p-6 border-b">
+            <DialogTitle className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <Flag className="w-6 h-6 text-indigo-600" />
               Referee’s Coaching Report
             </DialogTitle>
           </DialogHeader>
 
-          <div className="p-6 pt-4">
+          <div className="p-4 sm:p-6 space-y-4">
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Select Match <span className="text-red-500">*</span>
@@ -738,7 +609,7 @@ export const ExecutiveDashboard: React.FC = () => {
                     .map((apt) => (
                       <SelectItem key={apt.id} value={apt.id}>
                         <div className="flex justify-between items-center">
-                          <span>{apt.homeTeam} vs {apt.awayTeam}</span>
+                          <span className="font-medium">{apt.homeTeam} vs {apt.awayTeam}</span>
                           <span className="text-xs text-gray-500 ml-2">
                             {apt.date} @ {apt.venue}
                           </span>
