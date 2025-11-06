@@ -78,7 +78,6 @@ interface Appointment {
 }
 
 export const ExecutiveDashboard: React.FC = () => {
-  // === State ===
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [coachReports, setCoachReports] = useState<Set<string>>(new Set());
   const [loadingAppointments, setLoadingAppointments] = useState(true);
@@ -101,10 +100,10 @@ export const ExecutiveDashboard: React.FC = () => {
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [overviewDetailsOpen, setOverviewDetailsOpen] = useState(false);
 
   const currentUser = getAuth().currentUser;
 
-  // === Real-time Data ===
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
       const data = snap.docs.map((d) => ({
@@ -130,7 +129,6 @@ export const ExecutiveDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // === Helpers ===
   const openCoachingForm = (match?: Appointment) => {
     if (match) setSelectedMatchId(match.id);
     else setSelectedMatchId("");
@@ -175,7 +173,6 @@ export const ExecutiveDashboard: React.FC = () => {
   const uniqueReferees = Array.from(new Set(appointments.map((a) => a.referee || a.ar).filter(Boolean)));
   const uniqueVenues = Array.from(new Set(appointments.map((a) => a.venue)));
 
-  // === Handlers ===
   const handleLogout = async () => {
     const auth = getAuth();
     try {
@@ -252,7 +249,6 @@ export const ExecutiveDashboard: React.FC = () => {
     });
   };
 
-  // === Render Card ===
   const renderAppointmentCard = (apt: Appointment, showTrail = false, isPast = false) => {
     const officialName = apt.referee || apt.ar || "—";
     const roleLabel = apt.referee ? "Referee" : apt.ar ? "Assistant Referee" : "Official";
@@ -365,7 +361,7 @@ export const ExecutiveDashboard: React.FC = () => {
           <div className="flex justify-between items-center gap-4">
             <div>
               <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">Executive Dashboard</h2>
-              <p className="text-sm text-gray-600 hidden sm:block">Real-time management</p>
+              <p className="text-sm text-gray-600 hidden sm:block">Real-time insights and management</p>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={handleLogout} className="text-red-600 border-red-600 text-xs sm:text-sm">
@@ -382,7 +378,7 @@ export const ExecutiveDashboard: React.FC = () => {
 
           {/* Desktop Tabs */}
           <div className="hidden sm:block">
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
               <TabsList className="grid grid-cols-4 lg:grid-cols-8 gap-1 p-1 bg-white/80 backdrop-blur rounded-xl shadow-sm">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="appointments">Current</TabsTrigger>
@@ -394,35 +390,226 @@ export const ExecutiveDashboard: React.FC = () => {
                 <TabsTrigger value="teams">Teams</TabsTrigger>
               </TabsList>
 
-              {/* Content */}
-              <TabsContent value="overview" className="space-y-4">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  <Card className="p-4 bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
-                    <p className="text-xs">Total</p>
-                    <p className="text-2xl font-bold">{stats.total}</p>
-                    <Calendar className="w-8 h-8 mt-2 opacity-50" />
+              {/* OVERVIEW - FULLY RESTORED */}
+              <TabsContent value="overview" className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card className="p-5 bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-emerald-100 text-sm">Total Appointments</p>
+                        <p className="text-3xl font-bold">{stats.total}</p>
+                      </div>
+                      <Calendar className="w-10 h-10 text-emerald-200" />
+                    </div>
                   </Card>
-                  <Card className="p-4 bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
-                    <p className="text-xs">Upcoming</p>
-                    <p className="text-2xl font-bold">{stats.current}</p>
-                    <Clock className="w-8 h-8 mt-2 opacity-50" />
+
+                  <Card className="p-5 bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-blue-100 text-sm">Upcoming</p>
+                        <p className="text-3xl font-bold">{stats.current}</p>
+                      </div>
+                      <Clock className="w-10 h-10 text-blue-200" />
+                    </div>
                   </Card>
-                  <Card className="p-4 bg-gradient-to-br from-amber-500 to-orange-600 text-white">
-                    <p className="text-xs">Acceptance</p>
-                    <p className="text-2xl font-bold">{stats.acceptanceRate}%</p>
-                    <CheckCircle className="w-8 h-8 mt-2 opacity-50" />
+
+                  <Card className="p-5 bg-gradient-to-br from-amber-500 to-orange-600 text-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-amber-100 text-sm">Acceptance Rate</p>
+                        <p className="text-3xl font-bold">{stats.acceptanceRate}%</p>
+                      </div>
+                      <CheckCircle className="w-10 h-10 text-amber-200" />
+                    </div>
                   </Card>
-                  <Card className="p-4 bg-gradient-to-br from-purple-500 to-pink-600 text-white">
-                    <p className="text-xs">Pending</p>
-                    <p className="text-2xl font-bold">{stats.pending}</p>
-                    <AlertCircle className="w-8 h-8 mt-2 opacity-50" />
+
+                  <Card className="p-5 bg-gradient-to-br from-purple-500 to-pink-600 text-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-purple-100 text-sm">Pending</p>
+                        <p className="text-3xl font-bold">{stats.pending}</p>
+                      </div>
+                      <AlertCircle className="w-10 h-10 text-purple-200" />
+                    </div>
+                  </Card>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  <Card className="p-5">
+                    <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                      <Trophy className="w-5 h-5 text-amber-600" /> Status Breakdown
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">Accepted</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-32 bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-emerald-500 h-2 rounded-full"
+                              style={{ width: `${stats.acceptanceRate}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-sm font-medium">{stats.accepted}</span>
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">Rejected</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-32 bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-red-500 h-2 rounded-full"
+                              style={{ width: `${stats.rejected / Math.max(stats.total, 1) * 100}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-sm font-medium">{stats.rejected}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card className="p-5">
+                    <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-blue-600" /> Recent Activity
+                    </h3>
+                    <p className="text-sm text-gray-500 italic">Live updates from appointments, reports, and results</p>
                   </Card>
                 </div>
               </TabsContent>
 
               {/* Other Tabs */}
-              <TabsContent value="appointments"><div className="space-y-4">{/* forms + lists */}</div></TabsContent>
-              <TabsContent value="all-appointments"><div className="space-y-4">{/* filters + list */}</div></TabsContent>
+              <TabsContent value="appointments">
+                <div className="space-y-8">
+                  <div className="flex justify-center gap-3 p-4 bg-white rounded-xl shadow-sm">
+                    <Button
+                      variant={showRefForm ? "default" : "outline"}
+                      onClick={() => { setShowRefForm(true); setShowCoachForm(false); }}
+                    >
+                      Appoint Referee
+                    </Button>
+                    <Button
+                      variant={showCoachForm ? "default" : "outline"}
+                      onClick={() => { setShowCoachForm(true); setShowRefForm(false); }}
+                    >
+                      Appoint Coach
+                    </Button>
+                  </div>
+
+                  {showRefForm && <AppointmentForm onSuccess={() => toast({ title: "Success", description: "Referee appointed!" })} />}
+                  {showCoachForm && <CoachAppointmentForm showForm={showCoachForm} setShowForm={setShowCoachForm} appointments={appointments} setAppointments={setAppointments} onSuccess={() => toast({ title: "Success", description: "Coach appointed!" })} />}
+
+                  <div>
+                    <h3 className="text-2xl font-bold mb-4">Current Appointments</h3>
+                    {loadingAppointments ? (
+                      <p className="text-center text-gray-500 py-8">Loading appointments...</p>
+                    ) : appointments.filter((a) => isAfter(parseISO(a.date), new Date())).length === 0 ? (
+                      <p className="text-center text-gray-500 py-8">No upcoming matches.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {appointments
+                          .filter((a) => isAfter(parseISO(a.date), new Date()))
+                          .sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime())
+                          .map((apt) => (
+                            <Card key={apt.id} className="p-5 hover:shadow-md transition">
+                              {renderAppointmentCard(apt, false, false)}
+                            </Card>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {appointments.filter((a) => !isAfter(parseISO(a.date), new Date())).length > 0 && (
+                    <div className="mt-12 border-t pt-8">
+                      <h3 className="text-xl font-bold mb-4 text-gray-700">Recent Appointments</h3>
+                      <p className="text-sm text-gray-500 mb-4 italic">
+                        Matches that have already taken place. Editing and deletion are locked.
+                      </p>
+                      <div className="space-y-4">
+                        {appointments
+                          .filter((a) => !isAfter(parseISO(a.date), new Date()))
+                          .sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime())
+                          .map((apt) => (
+                            <Card key={apt.id} className="p-5 opacity-75 border-l-4 border-l-gray-400 bg-gray-50">
+                              {renderAppointmentCard(apt, false, true)}
+                            </Card>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="all-appointments">
+                <div className="space-y-6">
+                  <Card className="p-4 bg-white">
+                    <div className="flex flex-col md:flex-row gap-3">
+                      <div className="flex-1 relative">
+                        <Search className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Search teams..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
+                      <select
+                        value={filterReferee}
+                        onChange={(e) => setFilterReferee(e.target.value)}
+                        className="px-3 py-2 border rounded-lg text-sm"
+                      >
+                        <option value="">All Officials</option>
+                        {uniqueReferees.map((r) => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={filterVenue}
+                        onChange={(e) => setFilterVenue(e.target.value)}
+                        className="px-3 py-2 border rounded-lg text-sm"
+                      >
+                        <option value="">All Venues</option>
+                        {uniqueVenues.map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="date"
+                        value={filterDate}
+                        onChange={(e) => setFilterDate(e.target.value)}
+                        className="px-3 py-2 border rounded-lg text-sm"
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setFilterReferee("");
+                          setFilterVenue("");
+                          setFilterDate("");
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </Card>
+
+                  <h3 className="text-2xl font-bold mb-4">All Appointments</h3>
+                  {filteredAppointments.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">No matches found.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {filteredAppointments.map((apt) => {
+                        const isPast = !isAfter(parseISO(apt.date), new Date());
+                        return (
+                          <Card key={apt.id} className="p-5 hover:shadow-md transition">
+                            {renderAppointmentCard(apt, true, isPast)}
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
               <TabsContent value="results"><ResultsView /></TabsContent>
               <TabsContent value="reports"><ReportsTab /></TabsContent>
               <TabsContent value="coaches"><CoachManagement /></TabsContent>
@@ -465,24 +652,69 @@ export const ExecutiveDashboard: React.FC = () => {
           {/* Mobile Content */}
           <div className="sm:hidden space-y-6">
             {activeTab === "overview" && (
-              <div className="grid grid-cols-2 gap-3">
-                <Card className="p-3 text-center bg-emerald-500 text-white">
-                  <p className="text-xs">Total</p>
-                  <p className="text-xl font-bold">{stats.total}</p>
-                </Card>
-                <Card className="p-3 text-center bg-blue-500 text-white">
-                  <p className="text-xs">Upcoming</p>
-                  <p className="text-xl font-bold">{stats.current}</p>
-                </Card>
-                <Card className="p-3 text-center bg-amber-500 text-white">
-                  <p className="text-xs">Rate</p>
-                  <p className="text-xl font-bold">{stats.acceptanceRate}%</p>
-                </Card>
-                <Card className="p-3 text-center bg-purple-500 text-white">
-                  <p className="text-xs">Pending</p>
-                  <p className="text-xl font-bold">{stats.pending}</p>
-                </Card>
-              </div>
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Card className="p-3 text-center bg-emerald-500 text-white">
+                    <p className="text-xs">Total</p>
+                    <p className="text-xl font-bold">{stats.total}</p>
+                  </Card>
+                  <Card className="p-3 text-center bg-blue-500 text-white">
+                    <p className="text-xs">Upcoming</p>
+                    <p className="text-xl font-bold">{stats.current}</p>
+                  </Card>
+                  <Card className="p-3 text-center bg-amber-500 text-white">
+                    <p className="text-xs">Rate</p>
+                    <p className="text-xl font-bold">{stats.acceptanceRate}%</p>
+                  </Card>
+                  <Card className="p-3 text-center bg-purple-500 text-white">
+                    <p className="text-xs">Pending</p>
+                    <p className="text-xl font-bold">{stats.pending}</p>
+                  </Card>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-xs"
+                  onClick={() => setOverviewDetailsOpen(!overviewDetailsOpen)}
+                >
+                  {overviewDetailsOpen ? "Hide" : "Show"} Details
+                  <ChevronDown className={`w-3 h-3 ml-1 transition-transform ${overviewDetailsOpen ? "rotate-180" : ""}`} />
+                </Button>
+
+                {overviewDetailsOpen && (
+                  <div className="space-y-3">
+                    <Card className="p-3">
+                      <h3 className="font-medium text-sm mb-2 flex items-center gap-1">
+                        <Trophy className="w-4 h-4 text-amber-600" /> Status
+                      </h3>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span>Accepted</span>
+                          <span className="font-medium">{stats.accepted}</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                          <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: `${stats.acceptanceRate}%` }}></div>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Rejected</span>
+                          <span className="font-medium">{stats.rejected}</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                          <div className="bg-red-500 h-1.5 rounded-full" style={{ width: `${stats.rejected / Math.max(stats.total, 1) * 100}%` }}></div>
+                        </div>
+                      </div>
+                    </Card>
+
+                    <Card className="p-3">
+                      <h3 className="font-medium text-sm mb-1 flex items-center gap-1">
+                        <FileText className="w-4 h-4 text-blue-600" /> Activity
+                      </h3>
+                      <p className="text-xs text-gray-500 italic">Live updates from appointments, reports, and results</p>
+                    </Card>
+                  </div>
+                )}
+              </>
             )}
 
             {activeTab === "appointments" && (
@@ -507,7 +739,6 @@ export const ExecutiveDashboard: React.FC = () => {
                 </div>
                 {showRefForm && <AppointmentForm onSuccess={() => toast({ title: "Appointed!" })} />}
                 {showCoachForm && <CoachAppointmentForm showForm={showCoachForm} setShowForm={setShowCoachForm} appointments={appointments} setAppointments={setAppointments} onSuccess={() => toast({ title: "Appointed!" })} />}
-                {/* Appointments list */}
               </div>
             )}
 
@@ -535,7 +766,6 @@ export const ExecutiveDashboard: React.FC = () => {
                     <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="w-full border rounded px-2 py-1" />
                   </div>
                 )}
-                {/* List */}
               </div>
             )}
 
@@ -550,7 +780,7 @@ export const ExecutiveDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Shared Content for Appointments */}
+          {/* Shared Appointment Lists */}
           {["appointments", "all-appointments"].includes(activeTab) && (
             <div className="space-y-4">
               {loadingAppointments ? (
@@ -573,7 +803,7 @@ export const ExecutiveDashboard: React.FC = () => {
       </div>
 
       {/* FAB */}
-      <div className="fixed bottom-6 right-6 z-50 pb-safe">
+      <div className="fixed bottom-6 right-6 z-50">
         <button
           onClick={() => openCoachingForm()}
           className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-medium rounded-full shadow-xl hover:shadow-lg transform hover:scale-105 transition"
@@ -583,7 +813,7 @@ export const ExecutiveDashboard: React.FC = () => {
         </button>
       </div>
 
-           {/* === COACHING REPORT DIALOG === */}
+      {/* Coaching Dialog */}
       <Dialog open={isCoachingOpen} onOpenChange={setIsCoachingOpen}>
         <DialogContent className="max-w-full w-full h-full sm:max-w-4xl sm:h-auto sm:max-h-[90vh] p-0 overflow-y-auto">
           <DialogHeader className="p-4 sm:p-6 border-b">
