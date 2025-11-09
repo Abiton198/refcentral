@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from "react";
+// src/components/appointments/AppointmentForm.tsx
+import React, { useEffect, useState, useMemo } from "react";
 import { Button } from "../ui/Button";
+import { Input } from "../ui/input";
 import { db } from "../../lib/firebase";
 import {
   collection,
@@ -15,6 +17,7 @@ import {
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { toast } from "@/components/ui/use-toast";
+import { Search, ArrowUpDown } from "lucide-react";
 
 export const AppointmentForm: React.FC = () => {
   const [referees, setReferees] = useState<any[]>([]);
@@ -23,10 +26,12 @@ export const AppointmentForm: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [refSearch, setRefSearch] = useState("");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
   const [formData, setFormData] = useState({
     date: "",
-    time: "", 
+    time: "",
     homeTeam: "",
     awayTeam: "",
     venue: "",
@@ -64,7 +69,7 @@ export const AppointmentForm: React.FC = () => {
   useEffect(() => {
     if (formData.homeTeam && teams.length > 0) {
       const selectedTeam = teams.find((t) => t.name === formData.homeTeam);
-      if (selectedTeam && selectedTeam.homeGround) {
+      if (selectedTeam?.homeGround) {
         setFormData((prev) => ({ ...prev, venue: selectedTeam.homeGround }));
       }
     }
@@ -78,6 +83,27 @@ export const AppointmentForm: React.FC = () => {
     });
     return () => unsub();
   }, []);
+
+  // Filtered & Sorted Referees
+  const filteredAndSortedReferees = useMemo(() => {
+    let filtered = referees;
+
+    if (refSearch.trim()) {
+      const term = refSearch.toLowerCase();
+      filtered = referees.filter((ref) => {
+        const fullName = `${ref.name || ""} ${ref.surname || ""}`.toLowerCase();
+        return fullName.includes(term);
+      });
+    }
+
+    return filtered.sort((a, b) => {
+      const nameA = `${a.name || ""} ${a.surname || ""}`.trim();
+      const nameB = `${b.name || ""} ${b.surname || ""}`.trim();
+      return sortOrder === "asc"
+        ? nameA.localeCompare(nameB)
+        : nameB.localeCompare(nameA);
+    });
+  }, [referees, refSearch, sortOrder]);
 
   // Submit
   const handleSubmit = async (e: React.FormEvent) => {
@@ -124,12 +150,11 @@ export const AppointmentForm: React.FC = () => {
         responses: {},
       };
 
-      // Set referee or AR
       if (formData.role === "referee") {
         appointmentData.referee = fullName;
         appointmentData.refereeId = selectedRef.id;
         appointmentData.refereeEmail = selectedRef.email || "";
-      } else if (formData.role === "ar") {
+      } else {
         appointmentData.ar = fullName;
         appointmentData.arId = selectedRef.id;
         appointmentData.arEmail = selectedRef.email || "";
@@ -156,12 +181,7 @@ export const AppointmentForm: React.FC = () => {
         toast({ title: "Created", description: "Appointment created successfully." });
       }
 
-      setFormData({
-        date: "", time: "", homeTeam: "", awayTeam: "", venue: "",
-        role: "referee", selectedReferee: "", gameType: "league", game: "", isSchoolGame: false,
-      });
-      setEditId(null);
-      setShowForm(false);
+      resetForm();
     } catch (err) {
       console.error("Error saving appointment:", err);
       toast({ title: "Error", description: "Failed to save appointment.", variant: "destructive" });
@@ -170,7 +190,15 @@ export const AppointmentForm: React.FC = () => {
     }
   };
 
-  // Edit
+  const resetForm = () => {
+    setFormData({
+      date: "", time: "", homeTeam: "", awayTeam: "", venue: "",
+      role: "referee", selectedReferee: "", gameType: "league", game: "", isSchoolGame: false,
+    });
+    setEditId(null);
+    setShowForm(false);
+  };
+
   const handleEdit = (appt: any) => {
     const role = appt.referee ? "referee" : "ar";
     const selectedReferee = appt.referee || appt.ar || "";
@@ -190,7 +218,6 @@ export const AppointmentForm: React.FC = () => {
     setShowForm(true);
   };
 
-  // Delete
   const handleDelete = async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this appointment?")) return;
     try {
@@ -215,114 +242,91 @@ export const AppointmentForm: React.FC = () => {
       {/* Form */}
       {showForm && (
         <form onSubmit={handleSubmit} className="p-6 border rounded-lg bg-gray-50 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <input
-              type="date"
-              value={formData.date}
-              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-              className="border rounded-lg px-4 py-2"
-              required
-            />
-            <input
-              type="time"
-              value={formData.time}
-              onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-              className="border rounded-lg px-4 py-2"
-              required
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <input type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="border rounded-lg px-4 py-2" required />
+            <input type="time" value={formData.time} onChange={(e) => setFormData({ ...formData, time: e.target.value })} className="border rounded-lg px-4 py-2" required />
           </div>
 
           {/* Teams */}
-          <select
-            value={formData.homeTeam}
-            onChange={(e) => setFormData({ ...formData, homeTeam: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            required
-          >
+          <select value={formData.homeTeam} onChange={(e) => setFormData({ ...formData, homeTeam: e.target.value })} className="w-full border rounded-lg px-4 py-2" required>
             <option value="">Select Home Team</option>
             {teams.map((team) => (
-              <option key={team.id} value={team.name}>
-                {team.name}
-              </option>
+              <option key={team.id} value={team.name}>{team.name}</option>
             ))}
           </select>
 
-          <select
-            value={formData.awayTeam}
-            onChange={(e) => setFormData({ ...formData, awayTeam: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            required
-          >
+          <select value={formData.awayTeam} onChange={(e) => setFormData({ ...formData, awayTeam: e.target.value })} className="w-full border rounded-lg px-4 py-2" required>
             <option value="">Select Away Team</option>
             {teams
               .filter((t) => t.name !== formData.homeTeam)
               .map((team) => (
-                <option key={team.id} value={team.name}>
-                  {team.name}
-                </option>
+                <option key={team.id} value={team.name}>{team.name}</option>
               ))}
           </select>
 
-          {/* Venue */}
-          <input
-            type="text"
-            value={formData.venue}
-            onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            placeholder="Venue"
-            required
-          />
+          <input type="text" value={formData.venue} onChange={(e) => setFormData({ ...formData, venue: e.target.value })} className="w-full border rounded-lg px-4 py-2" placeholder="Venue" required />
 
-          {/* Game Type */}
-          <select
-            value={formData.gameType}
-            onChange={(e) => setFormData({ ...formData, gameType: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            required
-          >
-            <option value="league">League</option>
-            <option value="school">School</option>
-            <option value="tournament">Tournament</option>
-            <option value="friendly">Friendly</option>
-          </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <select value={formData.gameType} onChange={(e) => setFormData({ ...formData, gameType: e.target.value })} className="border rounded-lg px-4 py-2" required>
+              <option value="league">League</option>
+              <option value="school">School</option>
+              <option value="tournament">Tournament</option>
+              <option value="friendly">Friendly</option>
+            </select>
 
-          {/* Game */}
-          <select
-            value={formData.game}
-            onChange={(e) => setFormData({ ...formData, game: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            required
-          >
-            <option value="">Select Game</option>
-            <option value="1st team">1st Team</option>
-            <option value="1st reserve">1st Reserve</option>
-            <option value="2nd team">2nd Team</option>
-          </select>
+            <select value={formData.game} onChange={(e) => setFormData({ ...formData, game: e.target.value })} className="border rounded-lg px-4 py-2" required>
+              <option value="">Select Game</option>
+              <option value="1st team">1st Team</option>
+              <option value="1st reserve">1st Reserve</option>
+              <option value="2nd team">2nd Team</option>
+            </select>
+          </div>
 
-          {/* Role */}
-          <select
-            value={formData.role}
-            onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            required
-          >
+          <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="w-full border rounded-lg px-4 py-2" required>
             <option value="referee">Referee</option>
             <option value="ar">Assistant Referee</option>
           </select>
 
-          {/* Referee */}
-          <select
-            value={formData.selectedReferee}
-            onChange={(e) => setFormData({ ...formData, selectedReferee: e.target.value })}
-            className="w-full border rounded-lg px-4 py-2"
-            required
-          >
-            <option value="">Select Referee</option>
-            {referees.map((ref) => {
-              const fullName = `${ref.name || ""} ${ref.surname || ""}`.trim();
-              return <option key={ref.id} value={fullName}>{fullName}</option>;
-            })}
-          </select>
+          {/* Referee Search + Sort + Dropdown */}
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  placeholder="Search referees..."
+                  value={refSearch}
+                  onChange={(e) => setRefSearch(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
+                className="shrink-0"
+              >
+                <ArrowUpDown className="w-4 h-4" />
+              </Button>
+            </div>
+
+            <select
+              value={formData.selectedReferee}
+              onChange={(e) => setFormData({ ...formData, selectedReferee: e.target.value })}
+              className="w-full border rounded-lg px-4 py-2 text-sm"
+              required
+            >
+              <option value="">Select Referee</option>
+              {filteredAndSortedReferees.map((ref) => {
+                const fullName = `${ref.name || ""} ${ref.surname || ""}`.trim();
+                return (
+                  <option key={ref.id} value={fullName}>
+                    {fullName} {ref.email ? `(${ref.email})` : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
 
           <Button type="submit" disabled={loading} className="w-full">
             {loading ? "Saving..." : editId ? "Update" : "Create"} Appointment
@@ -342,19 +346,13 @@ export const AppointmentForm: React.FC = () => {
               const roleLabel = appt.referee ? "Referee" : "Assistant Referee";
               return (
                 <li key={appt.id} className="border rounded-lg p-3 bg-white shadow-sm">
-                  <div className="flex justify-between">
-                    <div>
-                      <p className="font-semibold">
-                        {appt.homeTeam} vs {appt.awayTeam}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {appt.date} • {appt.time} • {appt.venue}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {roleLabel}: {officialName}
-                      </p>
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <p className="font-semibold">{appt.homeTeam} vs {appt.awayTeam}</p>
+                      <p className="text-sm text-gray-600">{appt.date} • {appt.time} • {appt.venue}</p>
+                      <p className="text-sm text-emerald-700 font-medium">{roleLabel}: {officialName}</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 mt-2 sm:mt-0">
                       <Button size="sm" onClick={() => handleEdit(appt)}>Edit</Button>
                       <Button size="sm" variant="destructive" onClick={() => handleDelete(appt.id)}>Delete</Button>
                     </div>

@@ -1,3 +1,4 @@
+// src/pages/executive/ExecutiveDashboard.tsx
 import React, { useEffect, useState, useMemo } from "react";
 import {
   collection,
@@ -10,6 +11,8 @@ import {
   where,
   getDoc,
   serverTimestamp,
+  arrayUnion,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getAuth, signOut } from "firebase/auth";
@@ -41,6 +44,8 @@ import {
   Menu,
   X,
   ChevronDown,
+  User,
+  Eye,
 } from "lucide-react";
 import {
   Dialog,
@@ -75,10 +80,16 @@ interface Appointment {
   status?: "pending" | "accepted" | "rejected";
   appointedBy?: string;
   auditTrail?: { action: string; by: string; at: any }[];
+  reportSubmitted?: boolean;
+  reportSubmittedBy?: string;
+  reportReviewed?: boolean;
+  reportReviewedBy?: string;
+  reportReviewedAt?: any;
 }
 
 export const ExecutiveDashboard: React.FC = () => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [refereeReports, setRefereeReports] = useState<Set<string>>(new Set());
   const [coachReports, setCoachReports] = useState<Set<string>>(new Set());
   const [loadingAppointments, setLoadingAppointments] = useState(true);
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
@@ -103,7 +114,9 @@ export const ExecutiveDashboard: React.FC = () => {
   const [overviewDetailsOpen, setOverviewDetailsOpen] = useState(false);
 
   const currentUser = getAuth().currentUser;
+  const currentUserName = currentUser?.displayName || currentUser?.email?.split("@")[0] || "Executive";
 
+  // 1. Listen to appointments
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
       const data = snap.docs.map((d) => ({
@@ -116,6 +129,7 @@ export const ExecutiveDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
+  // 2. Listen to coach reports
   useEffect(() => {
     const q = query(collection(db, "coachReports"));
     const unsub = onSnapshot(q, (snap) => {
@@ -128,6 +142,100 @@ export const ExecutiveDashboard: React.FC = () => {
     });
     return () => unsub();
   }, []);
+
+  // 3. Listen to referee reports
+  useEffect(() => {
+    const q = query(collection(db, "reports"));
+    const unsub = onSnapshot(q, (snap) => {
+      const reportedMatchIds = new Set<string>();
+      snap.docs.forEach((doc) => {
+        const data = doc.data();
+        if (data.matchId) reportedMatchIds.add(data.matchId);
+      });
+      setRefereeReports(reportedMatchIds);
+    });
+    return () => unsub();
+  }, []);
+
+  // 4. Real-time: When referee submits report → update appointment
+  useEffect(() => {
+    const q = query(collection(db, "reports"));
+    const unsub = onSnapshot(q, (snap) => {
+      snap.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          const data = change.doc.data();
+          const matchId = data.matchId;
+          const refereeName = data.refereeName || "Referee";
+
+          if (matchId && !refereeReports.has(matchId)) {
+            const now = Timestamp.now();
+            updateDoc(doc(db, "appointments", matchId), {
+              reportSubmitted: true,
+              reportSubmittedBy: refereeName,
+              auditTrail: arrayUnion({
+                action: "Match Report Submitted",
+                by: refereeName,
+                at: now,
+              }),
+            }).catch(console.error);
+
+            setAppointments(prev => prev.map(apt =>
+              apt.id === matchId
+                ? {
+                    ...apt,
+                    reportSubmitted: true,
+                    reportSubmittedBy: refereeName,
+                    auditTrail: [
+                      { action: "Match Report Submitted", by: refereeName, at: now.toDate().toISOString() },
+                      ...(apt.auditTrail || [])
+                    ].slice(0, 50),
+                  }
+                : apt
+            ));
+          }
+        }
+      });
+    });
+    return () => unsub();
+  }, [refereeReports]);
+
+  // 5. FIXED: Mark report as reviewed — NO serverTimestamp() in arrayUnion
+  const handleMarkReviewed = async (matchId: string) => {
+    try {
+      const now = new Date().toISOString();
+
+      await updateDoc(doc(db, "appointments", matchId), {
+        reportReviewed: true,
+        reportReviewedBy: currentUserName,
+        reportReviewedAt: serverTimestamp(),
+        auditTrail: arrayUnion({
+          action: "Report Reviewed",
+          by: currentUserName,
+          at: now, // Use ISO string, NOT serverTimestamp()
+        }),
+      });
+
+      setAppointments(prev => prev.map(apt =>
+        apt.id === matchId
+          ? {
+              ...apt,
+              reportReviewed: true,
+              reportReviewedBy: currentUserName,
+              reportReviewedAt: now,
+              auditTrail: [
+                { action: "Report Reviewed", by: currentUserName, at: now },
+                ...(apt.auditTrail || [])
+              ].slice(0, 50),
+            }
+          : apt
+      ));
+
+      toast({ title: "Marked as Reviewed", description: `By ${currentUserName}` });
+    } catch (err: any) {
+      console.error("Review failed:", err);
+      toast({ title: "Error", description: err.message || "Failed to mark reviewed.", variant: "destructive" });
+    }
+  };
 
   const openCoachingForm = (match?: Appointment) => {
     if (match) setSelectedMatchId(match.id);
@@ -236,23 +344,22 @@ export const ExecutiveDashboard: React.FC = () => {
   };
 
   const handleReportSubmitted = async (matchId: string, coachName: string) => {
-    const aptRef = doc(db, "appointments", matchId);
-    await updateDoc(aptRef, {
-      auditTrail: [
-        ...(appointments.find(a => a.id === matchId)?.auditTrail || []),
-        {
-          action: "Coaching report submitted",
-          by: coachName,
-          at: serverTimestamp(),
-        },
-      ],
+    const now = new Date().toISOString();
+    await updateDoc(doc(db, "appointments", matchId), {
+      auditTrail: arrayUnion({
+        action: "Coaching report submitted",
+        by: coachName,
+        at: now,
+      }),
     });
   };
 
   const renderAppointmentCard = (apt: Appointment, showTrail = false, isPast = false) => {
     const officialName = apt.referee || apt.ar || "—";
     const roleLabel = apt.referee ? "Referee" : apt.ar ? "Assistant Referee" : "Official";
-    const hasReport = coachReports.has(apt.id);
+    const hasCoachReport = coachReports.has(apt.id);
+    const hasRefReport = refereeReports.has(apt.id);
+    const isReviewed = apt.reportReviewed;
 
     return (
       <div className="flex flex-col sm:flex-row justify-between gap-4">
@@ -269,13 +376,28 @@ export const ExecutiveDashboard: React.FC = () => {
                 School
               </Badge>
             )}
-            {hasReport ? (
-              <Badge variant="success" className="flex items-center gap-1 text-xs">
-                <CheckCircle2 className="w-3 h-3" /> Report
-              </Badge>
+
+            {/* REFEREE REPORT STATUS */}
+            {hasRefReport ? (
+              isReviewed ? (
+                <Badge variant="success" className="flex items-center gap-1 text-xs">
+                  <Eye className="w-3 h-3" /> Reviewed by {apt.reportReviewedBy}
+                </Badge>
+              ) : (
+                <Badge variant="success" className="flex items-center gap-1 text-xs">
+                  <CheckCircle2 className="w-3 h-3" /> Report
+                </Badge>
+              )
             ) : isPast ? (
-              <Badge variant="secondary" className="text-xs">Not yet</Badge>
+              <Badge variant="secondary" className="text-xs">No Report</Badge>
             ) : null}
+
+            {/* COACH REPORT */}
+            {hasCoachReport && (
+              <Badge variant="emerald" className="flex items-center gap-1 text-xs">
+                <User className="w-3 h-3" /> Coach
+              </Badge>
+            )}
           </div>
 
           <div className="text-sm text-gray-600 space-y-1">
@@ -284,6 +406,11 @@ export const ExecutiveDashboard: React.FC = () => {
             <p><strong>{roleLabel}:</strong> {officialName}</p>
             {apt.coachName && <p><strong>Coach:</strong> {apt.coachName}</p>}
             {apt.appointedBy && <p className="text-xs text-gray-500">Appointed by: {apt.appointedBy}</p>}
+            {hasRefReport && apt.reportSubmittedBy && (
+              <p className="text-xs text-emerald-700 font-medium">
+                Report by: {apt.reportSubmittedBy}
+              </p>
+            )}
           </div>
         </div>
 
@@ -308,7 +435,19 @@ export const ExecutiveDashboard: React.FC = () => {
             </>
           )}
 
-          {!hasReport && !isPast && (
+          {/* REVIEW BUTTON */}
+          {hasRefReport && !isReviewed && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-blue-600 text-blue-700 text-xs"
+              onClick={() => handleMarkReviewed(apt.id)}
+            >
+              <Eye className="w-3 h-3 mr-1" /> Mark Reviewed
+            </Button>
+          )}
+
+          {!hasCoachReport && !isPast && (
             <Button
               size="sm"
               variant="default"
@@ -343,7 +482,11 @@ export const ExecutiveDashboard: React.FC = () => {
             <p className="font-medium mb-1">Trail:</p>
             {apt.auditTrail.slice(0, 3).map((log, i) => {
               const date = formatTimestamp(log.at);
-              return <p key={i}>• {log.action} by {log.by} at {format(date, "dd MMM HH:mm")}</p>;
+              return (
+                <p key={i}>
+                  • {log.action} by <span className="font-medium">{log.by}</span> at {format(date, "dd MMM HH:mm")}
+                </p>
+              );
             })}
             {apt.auditTrail.length > 3 && <p className="italic">...more</p>}
           </div>
@@ -390,7 +533,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 <TabsTrigger value="teams">Teams</TabsTrigger>
               </TabsList>
 
-              {/* OVERVIEW - FULLY RESTORED */}
+              {/* OVERVIEW */}
               <TabsContent value="overview" className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <Card className="p-5 bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
@@ -476,7 +619,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 </div>
               </TabsContent>
 
-              {/* Other Tabs */}
+              {/* CURRENT APPOINTMENTS */}
               <TabsContent value="appointments">
                 <div className="space-y-8">
                   <div className="flex justify-center gap-3 p-4 bg-white rounded-xl shadow-sm">
@@ -538,6 +681,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 </div>
               </TabsContent>
 
+              {/* ALL APPOINTMENTS */}
               <TabsContent value="all-appointments">
                 <div className="space-y-6">
                   <Card className="p-4 bg-white">
@@ -780,25 +924,6 @@ export const ExecutiveDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Shared Appointment Lists */}
-          {["appointments", "all-appointments"].includes(activeTab) && (
-            <div className="space-y-4">
-              {loadingAppointments ? (
-                <p className="text-center py-8 text-gray-500">Loading...</p>
-              ) : filteredAppointments.length === 0 ? (
-                <p className="text-center py-8 text-gray-500">No matches.</p>
-              ) : (
-                filteredAppointments.map((apt) => {
-                  const isPast = !isAfter(parseISO(apt.date), new Date());
-                  return (
-                    <Card key={apt.id} className="p-4 shadow-sm">
-                      {renderAppointmentCard(apt, activeTab === "all-appointments", isPast)}
-                    </Card>
-                  );
-                })
-              )}
-            </div>
-          )}
         </div>
       </div>
 
