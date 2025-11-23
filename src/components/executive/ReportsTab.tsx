@@ -369,12 +369,63 @@ export const ReportsTab: React.FC = () => {
     ${r.safetyFeedback ? `<div class="section"><span class="label">Safety:</span><pre>${r.safetyFeedback}</pre></div>` : ""}
   `;
 
-  const renderRefereeDetails = (r: RefereeReport) => `
-    <div class="section"><span class="label">Type:</span> ${r.type.replace(/_/g, " ")}</div>
-    ${r.lawBroken ? `<div class="section"><span class="label">Law broken:</span> ${r.lawBroken}</div>` : ""}
-    ${r.timeOfIncident ? `<div class="section"><span class="label">Time of incident:</span> ${r.timeOfIncident}</div>` : ""}
-    <div class="section"><span class="label">Description:</span><pre>${r.description}</pre></div>
-  `;
+  const renderRefereeDetails = (r: RefereeReport) => {
+    // Safely extract the new/detailed fields using type assertion since the shared
+    // interface might not define them, but the runtime data should have them.
+    const reportData = r as any;
+    const cardType = reportData.cardType || r.type;
+    const lawNumber = reportData.lawNumber || r.lawBroken;
+    const lawTitle = reportData.lawTitle || "N/A";
+    const lawExplanation = reportData.lawExplanation || "N/A";
+    const playerName = reportData.playerName;
+    const playerTeam = reportData.playerTeam;
+    const incidentMinute = reportData.minute || r.timeOfIncident;
+
+    let detailsHtml = `
+      <div class="section"><span class="label">Action Type:</span> ${cardType.replace(/_/g, " ").toUpperCase()}</div>
+    `;
+
+    // Player Details
+    if (playerName || playerTeam) {
+      detailsHtml += `
+        <div class="section" style="border-left: 3px solid #f97316; padding-left: 10px; margin-top: 15px;">
+          <h3 style="font-size: 14px; margin-bottom: 5px;">PLAYER DETAILS</h3>
+          ${playerName ? `<div class="section"><span class="label">Player Name:</span> ${playerName}</div>` : ''}
+          ${playerTeam ? `<div class="section"><span class="label">Player Team:</span> ${playerTeam}</div>` : ''}
+        </div>
+      `;
+    }
+
+    // Incident Time
+    if (incidentMinute) {
+      detailsHtml += `<div class="section"><span class="label">Time of Incident:</span> ${incidentMinute}</div>`;
+    }
+
+    // Law Details (if applicable)
+    if (lawNumber && lawNumber !== "N/A") {
+      detailsHtml += `
+        <div class="section" style="border-left: 3px solid #3b82f6; padding-left: 10px; margin-top: 15px;">
+          <h3 style="font-size: 14px; margin-bottom: 5px;">LAW INFRINGEMENT</h3>
+          <div class="section">
+            <span class="label">Law Broken:</span> ${lawNumber} — ${lawTitle}
+          </div>
+          <div class="section">
+            <span class="label">Explanation:</span> ${lawExplanation}
+          </div>
+        </div>
+      `;
+    }
+
+    // Description
+    detailsHtml += `
+      <div class="section">
+        <span class="label">Referee's Description:</span>
+        <pre>${r.description}</pre>
+      </div>
+    `;
+
+    return detailsHtml;
+  };
 
   /* ------------------------------------------------------------------ */
   /*  Filters                                                            */
@@ -971,4 +1022,3 @@ const RefereeReportList: React.FC<{ reports: RefereeReport[] }> = ({ reports }) 
 
 export default RefereeReportList;
 
-// report file not working........
