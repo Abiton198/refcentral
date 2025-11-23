@@ -16,18 +16,29 @@ import { getAuth } from "firebase/auth";
 import { format } from "date-fns";
 import { toast } from "@/components/ui/use-toast";
 
-// External sub‑forms
-import { CardReportForm } from "./CardReportForm";
+import CardReportForm  from "./CardReportForm";
+
+/* ============================================================= */
+/* Utility: Map Firestore types → UI Types                      */
+/* ============================================================= */
+const mapReportType = (type: string): "card" | "general" => {
+  const t = type.toLowerCase();
+
+  if (t === "yellow_card" || t === "red_card" || t === "incident") {
+    return "card"; // all card-related reports go to card form
+  }
+
+  return "general";
+};
 
 interface RefereeUnifiedReportCenterProps {
   onClose: () => void;
   reportId?: string | null;
 }
 
-export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProps> = ({
-  onClose,
-  reportId,
-}) => {
+export const RefereeUnifiedReportCenter: React.FC<
+  RefereeUnifiedReportCenterProps
+> = ({ onClose, reportId }) => {
   const [reportType, setReportType] = useState<"card" | "general">("card");
   const [appointments, setAppointments] = useState<any[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState("");
@@ -39,20 +50,21 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
   const auth = getAuth();
   const user = auth.currentUser;
 
-  const refereeName = user?.displayName || "Unknown Referee";
   const refereeEmail = user?.email || "unknown@example.com";
 
   /* --------------------------------------------------- */
-  /* 1. Fetch assigned matches                           */
+  /* 1. Fetch matches                                    */
   /* --------------------------------------------------- */
   useEffect(() => {
     const fetchAppointments = async () => {
       if (!refereeEmail) return;
+
       try {
         const q = query(
           collection(db, "appointments"),
           where("refereeEmail", "==", refereeEmail)
         );
+
         const snap = await getDocs(q);
         const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setAppointments(data);
@@ -67,11 +79,12 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
         setLoading(false);
       }
     };
+
     fetchAppointments();
   }, [refereeEmail]);
 
   /* --------------------------------------------------- */
-  /* 2. Auto‑select the match once an id is chosen       */
+  /* 2. Auto-select match                                */
   /* --------------------------------------------------- */
   useEffect(() => {
     const found = appointments.find((m) => m.id === selectedMatchId);
@@ -79,34 +92,43 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
   }, [selectedMatchId, appointments]);
 
   /* --------------------------------------------------- */
-  /* 3. Load an existing report (edit mode)              */
+  /* 3. Load existing report                             */
   /* --------------------------------------------------- */
   useEffect(() => {
     const fetchReport = async () => {
       if (!reportId || appointments.length === 0) return;
+
       try {
         const snap = await getDoc(doc(db, "reports", reportId));
-        if (snap.exists()) {
-          const data = snap.data();
-          // Only allow card/general in this centre
-          if (data.type === "coaching_report") {
-            toast({
-              title: "Info",
-              description: "Coaching reports are edited in their own modal.",
-            });
-            onClose();
-            return;
-          }
-          setReportType(data.type === "card_report" ? "card" : "general");
-          setCreatedAt(data.createdAt?.toDate?.() ?? null);
-          setUpdatedAt(data.updatedAt?.toDate?.() ?? null);
+        if (!snap.exists()) return;
 
-          if (data.matchId) {
-            setSelectedMatchId(data.matchId);
-            const matchSnap = await getDoc(doc(db, "appointments", data.matchId));
-            if (matchSnap.exists()) {
-              setSelectedMatch({ id: matchSnap.id, ...matchSnap.data() });
-            }
+        const data = snap.data();
+
+        // coaching report not allowed here
+        if (data.type === "coaching_report") {
+          toast({
+            title: "Info",
+            description: "Coaching reports are edited in their own modal.",
+          });
+          onClose();
+          return;
+        }
+
+        // ---- FIX: interpret card types properly ----
+        setReportType(mapReportType(data.type));
+
+        setCreatedAt(data.createdAt?.toDate?.() ?? null);
+        setUpdatedAt(data.updatedAt?.toDate?.() ?? null);
+
+        // match restore
+        if (data.matchId) {
+          setSelectedMatchId(data.matchId);
+
+          const matchSnap = await getDoc(
+            doc(db, "appointments", data.matchId)
+          );
+          if (matchSnap.exists()) {
+            setSelectedMatch({ id: matchSnap.id, ...matchSnap.data() });
           }
         }
       } catch (err) {
@@ -118,26 +140,37 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
         });
       }
     };
+
     fetchReport();
   }, [reportId, appointments, onClose]);
 
   /* --------------------------------------------------- */
-  /* 4. Render the correct sub‑form                      */
-  /* --------------------------------------------------- */
-  const renderReportForm = () => {
-    if (!selectedMatch) {
-      return (
-        <div className="border border-dashed rounded-lg p-8 text-center text-gray-500">
-          Select a match to start your report.
-        </div>
-      );
-    }
+/* 4. Form renderer                                    */
+/* --------------------------------------------------- */
+const renderReportForm = () => {
+  if (!selectedMatch) {
+    return (
+      <div className="border border-dashed rounded-lg p-8 text-center text-gray-500">
+        Select a match to start your report.
+      </div>
+    );
+  }
 
-    if (reportType === "card") {
-      return <CardReportForm match={selectedMatch} user={user} onClose={onClose} />;
-    }
-    return <GeneralIncidentForm match={selectedMatch} user={user} onClose={onClose} />;
+  // Ensure time is a string (HH:mm)
+  const matchWithFormattedTime = {
+    ...selectedMatch,
+    time: selectedMatch.time?.toDate
+      ? format(selectedMatch.time.toDate(), "HH:mm")
+      : selectedMatch.time || "",
   };
+
+  if (reportType === "card") {
+    // CardReportForm now gets current user internally via getAuth()
+    return <CardReportForm match={matchWithFormattedTime} onSuccess={() => {}} />;
+  }
+
+  return <GeneralIncidentForm match={matchWithFormattedTime} onClose={onClose} user={user} />;
+};
 
   return (
     <Card className="max-w-4xl mx-auto p-6">
@@ -155,20 +188,27 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
       {/* Timestamps */}
       {(createdAt || updatedAt) && (
         <div className="mb-4 text-sm text-gray-600 space-y-1">
-          {createdAt && <p>Submitted: {format(createdAt, "dd MMM yyyy, HH:mm")}</p>}
-          {updatedAt && <p>Last Edited: {format(updatedAt, "dd MMM yyyy, HH:mm")}</p>}
+          {createdAt && (
+            <p>Submitted: {format(createdAt, "dd MMM yyyy, HH:mm")}</p>
+          )}
+          {updatedAt && (
+            <p>Last Edited: {format(updatedAt, "dd MMM yyyy, HH:mm")}</p>
+          )}
         </div>
       )}
 
       {/* Match selector */}
       <div className="mb-4">
-        <label className="font-medium text-sm text-gray-700">Select Match</label>
+        <label className="font-medium text-sm text-gray-700">
+          Select Match
+        </label>
         <select
           value={selectedMatchId}
           onChange={(e) => setSelectedMatchId(e.target.value)}
           className="w-full border rounded-lg px-4 py-2 mt-1 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
         >
           <option value="">Choose from your appointments</option>
+
           {loading ? (
             <option disabled>Loading matches…</option>
           ) : appointments.length === 0 ? (
@@ -176,7 +216,8 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
           ) : (
             appointments.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.homeTeam} vs {m.awayTeam} — {m.date} @ {m.venue || m.location}
+                {m.homeTeam} vs {m.awayTeam} — {m.date} @{" "}
+                {m.venue || m.location}
               </option>
             ))
           )}
@@ -184,16 +225,27 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
 
         {selectedMatch && (
           <div className="bg-gray-50 border rounded-lg p-3 mt-2 text-sm text-gray-700">
-            <p><strong>Venue:</strong> {selectedMatch.venue || selectedMatch.venueName || selectedMatch.location}</p>
-            <p><strong>Date:</strong> {selectedMatch.date}</p>
-            <p><strong>Time:</strong> {selectedMatch.time}</p>
+            <p>
+              <strong>Venue:</strong>{" "}
+              {selectedMatch.venue ||
+                selectedMatch.venueName ||
+                selectedMatch.location}
+            </p>
+            <p>
+              <strong>Date:</strong> {selectedMatch.date}
+            </p>
+            <p>
+              <strong>Time:</strong> {selectedMatch.time}
+            </p>
           </div>
         )}
       </div>
 
-      {/* Report‑type toggle (Card ↔ General) */}
+      {/* Report type toggle */}
       <div className="mb-6">
-        <label className="font-medium text-sm text-gray-700">Report Type</label>
+        <label className="font-medium text-sm text-gray-700">
+          Report Type
+        </label>
         <div className="flex gap-2 mt-1">
           <button
             type="button"
@@ -206,6 +258,7 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
           >
             Card Report
           </button>
+
           <button
             type="button"
             onClick={() => setReportType("general")}
@@ -220,7 +273,6 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
         </div>
       </div>
 
-      {/* Dynamic form */}
       {renderReportForm()}
 
       {/* Footer */}
@@ -234,7 +286,7 @@ export const RefereeUnifiedReportCenter: React.FC<RefereeUnifiedReportCenterProp
 };
 
 /* ------------------------------------------------------------------ */
-/* General / Incident Report (kept inline – no external file)        */
+/* General / Incident Report                                          */
 /* ------------------------------------------------------------------ */
 const GeneralIncidentForm = ({
   match,
@@ -252,43 +304,54 @@ const GeneralIncidentForm = ({
     e.preventDefault();
 
     if (!user) {
-      toast({ title: "Error", description: "You must be logged in.", variant: "destructive" });
-      return;
+      return toast({
+        title: "Error",
+        description: "You must be logged in.",
+        variant: "destructive",
+      });
     }
+
     if (!match?.id) {
-      toast({ title: "Error", description: "Match not found.", variant: "destructive" });
-      return;
+      return toast({
+        title: "Error",
+        description: "Match not found.",
+        variant: "destructive",
+      });
     }
+
     if (!details.trim()) {
-      toast({ title: "Required", description: "Please enter report details.", variant: "destructive" });
-      return;
+      return toast({
+        title: "Required",
+        description: "Please enter report details.",
+        variant: "destructive",
+      });
     }
 
     try {
       setSaving(true);
+
       const payload = {
-        type: "general_report" as const,
+        type: "incident", // 🔥 FIXED: correct type for general reports
         matchId: match.id,
         refereeId: user.uid,
         refereeEmail: user.email || "",
         refereeName: user.displayName || "Unknown Referee",
-        status: "submitted" as const,
+        status: "submitted",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         details: details.trim(),
       };
 
       await addDoc(collection(db, "reports"), payload);
-      toast({ title: "Success", description: "General report submitted." });
+      toast({ title: "Success", description: "Incident report submitted." });
+
       setDetails("");
       onClose?.();
     } catch (err: any) {
       console.error(err);
       toast({
         title: "Failed",
-        description: err.message.includes("permission")
-          ? "Check login and report data."
-          : err.message,
+        description: err.message,
         variant: "destructive",
       });
     } finally {
@@ -297,7 +360,10 @@ const GeneralIncidentForm = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 bg-white border p-5 rounded-lg">
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-4 bg-white border p-5 rounded-lg"
+    >
       <textarea
         placeholder="Describe the incident, observations, or general feedback..."
         value={details}
@@ -305,8 +371,9 @@ const GeneralIncidentForm = ({
         className="w-full border rounded-lg px-4 py-2 h-32 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
         required
       />
+
       <Button type="submit" className="w-full" disabled={saving}>
-        {saving ? "Submitting…" : "Submit General Report"}
+        {saving ? "Submitting…" : "Submit Incident Report"}
       </Button>
     </form>
   );

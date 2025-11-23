@@ -116,7 +116,13 @@ export const ReportsTab: React.FC = () => {
           timeOfIncident: raw.timeOfIncident || raw.minute || "",
           homeTeam: raw.homeTeam || (raw.teams?.split?.(" vs ")?.[0]) || "Unknown",
           awayTeam: raw.awayTeam || (raw.teams?.split?.(" vs ")?.[1]) || "Unknown",
+          playerName: raw.playerName || "",
+          playerTeam: raw.playerTeam || "",
           venue: raw.venue || "Unknown Venue",
+          lawNumber: raw.lawNumber || "",
+          lawTitle: raw.lawTitle || "",
+          lawExplanation: raw.lawExplanation || "",
+          minute: raw.minute || "",
           matchDate: raw.matchDate || "",
           matchTime: raw.matchTime || "",
           createdAt: raw.createdAt,
@@ -764,14 +770,205 @@ const CoachDetailView: React.FC<{ report: CoachReport }> = ({ report }) => (
   </div>
 );
 
-const RefereeDetailView: React.FC<{ report: RefereeReport }> = ({ report }) => (
-  <div className="space-y-4 text-gray-800">
-    <p><strong>Type:</strong> {report.type.replace(/_/g, " ").toUpperCase()}</p>
-    {report.lawBroken && <p><strong>Law broken:</strong> {report.lawBroken}</p>}
-    {report.timeOfIncident && <p><strong>Time of incident:</strong> {report.timeOfIncident}</p>}
-    <div>
-      <strong>Description:</strong>
-      <p className="mt-2 p-4 bg-gray-50 rounded-lg border whitespace-pre-line">{report.description}</p>
+const RefereeDetailView: React.FC<{ report: RefereeReport }> = ({ report }) => {
+  // Use a helper function to determine the card/incident label
+  const getCardLabel = () => {
+    const t = (report as any).cardType?.toLowerCase() || report.type?.toLowerCase() || "";
+    
+    if (t.includes("yellow")) return "Yellow Card";
+    if (t.includes("red")) return "Red Card";
+    if (t.includes("incident") || t.includes("general")) return "Incident Report";
+
+    return t.replace(/_/g, " ").toUpperCase() || "DISCIPLINARY ACTION";
+  };
+  
+  const lawBroken = (report as any).lawNumber || report.lawBroken;
+  const lawTitle = (report as any).lawTitle;
+  const lawExplanation = (report as any).lawExplanation;
+  const incidentTime = (report as any).minute || report.timeOfIncident;
+  const playerName = (report as any).playerName;
+  const playerTeam = (report as any).playerTeam;
+  
+
+  return (
+    <div className="space-y-6 text-gray-800">
+      
+      {/* CARD / INCIDENT TYPE HEADER */}
+      <div className="flex items-center justify-between pb-3 border-b-2 border-red-200">
+        <h3 className="text-xl font-bold text-red-700">
+            {getCardLabel()}
+        </h3>
+        {incidentTime && (
+          
+            <span className="text-xl font-extrabold text-red-600 bg-red-100 px-3 py-1 rounded-lg">
+               Time of incident: {incidentTime} min
+            </span>
+        )}
+      </div>
+
+      {/* Player Information */}
+      {(playerName || playerTeam) && (
+        <div className="p-4 bg-gray-50 rounded-xl border">
+          <p className="text-sm font-semibold text-gray-700">PLAYER DETAILS:</p>
+          {playerName && (
+            <p>
+              <strong>Player Name:</strong> {playerName}
+            </p>
+          )}
+          {playerTeam && (
+            <p>
+              <strong>Player Team:</strong> {playerTeam}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* LAW BROKEN DETAILS */}
+      {lawBroken && (
+        <div className="space-y-2 p-4 bg-blue-50 rounded-xl border-2 border-blue-200">
+          <p className="text-sm font-semibold text-blue-700">RUGBY LAW REFERENCE:</p>
+          
+          <p className="text-lg font-bold text-blue-900">
+            {lawBroken} {lawTitle ? `— ${lawTitle}` : ''}
+          </p>
+
+          {lawExplanation && (
+            <p className="italic text-blue-800">
+              <strong className="text-blue-900">Explanation:</strong> {lawExplanation}
+            </p>
+          )}
+        </div>
+      )}
+      
+      {/* DESCRIPTION */}
+      <div>
+        <strong className="block mb-2 text-lg">Referee's Description of Incident:</strong>
+        <p className="mt-1 p-4 bg-gray-100 rounded-lg border border-gray-300 whitespace-pre-line text-lg">
+          {report.description}
+        </p>
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
+/* Modified RefereeDetailView Component */
+interface RefereeReport {
+  id: string;
+  source: "referee";
+  type: string;
+  cardType?: string;
+  description: string;
+  minute?: string;
+  timeOfIncident?: string;
+  playerName?: string;
+  playerTeam?: string;
+  lawNumber?: string;
+  lawTitle?: string;
+  lawExplanation?: string;
+  homeTeam: string;
+  awayTeam: string;
+  venue: string;
+  matchDate?: string;
+  matchTime?: string;
+}
+
+const getCardColor = (report: RefereeReport) => {
+  const type = (report.cardType || report.type || "").toLowerCase();
+  switch (type) {
+    case "red_card":
+    case "red":
+      return {
+        bg: "bg-red-100",
+        border: "border-red-400",
+        text: "text-red-700",
+      };
+    case "yellow_card":
+    case "yellow":
+      return {
+        bg: "bg-yellow-100",
+        border: "border-yellow-400",
+        text: "text-yellow-700",
+      };
+    case "incident":
+    case "general_report":
+      return {
+        bg: "bg-blue-100",
+        border: "border-blue-400",
+        text: "text-blue-700",
+      };
+    default:
+      return {
+        bg: "bg-gray-100",
+        border: "border-gray-400",
+        text: "text-gray-700",
+      };
+  }
+};
+
+const RefereeReportCard: React.FC<{ report: RefereeReport }> = ({ report }) => {
+  const colors = getCardColor(report);
+  const incidentTime = report.minute || report.timeOfIncident;
+
+  return (
+    <div className={`rounded-xl border-2 ${colors.border} ${colors.bg} p-4 shadow-md space-y-3`}>
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <h3 className={`text-lg font-bold ${colors.text}`}>
+          {report.cardType || report.type || "DISCIPLINARY ACTION"}
+        </h3>
+        {incidentTime && (
+          <span className="px-2 py-1 bg-white rounded-lg font-semibold text-sm border">{`Min ${incidentTime}`}</span>
+        )}
+      </div>
+
+      {/* Match Info */}
+      <div className="text-sm text-gray-800">
+        <p><strong>Match:</strong> {report.homeTeam} vs {report.awayTeam}</p>
+        <p><strong>Venue:</strong> {report.venue}</p>
+        {(report.matchDate || report.matchTime) && (
+          <p>
+            <strong>Date/Time:</strong> {report.matchDate || "N/A"} {report.matchTime ? `at ${report.matchTime}` : ""}
+          </p>
+        )}
+      </div>
+
+      {/* Player Info */}
+      {(report.playerName || report.playerTeam) && (
+        <div className="text-sm border-t border-gray-300 pt-2">
+          {report.playerName && <p><strong>Player:</strong> {report.playerName}</p>}
+          {report.playerTeam && <p><strong>Team:</strong> {report.playerTeam}</p>}
+        </div>
+      )}
+
+      {/* Law Reference */}
+      {report.lawNumber && (
+        <div className="text-sm border-t border-gray-300 pt-2 space-y-1">
+          <p className="font-semibold">{report.lawNumber} – {report.lawTitle || "Law Title N/A"}</p>
+          {report.lawExplanation && <p className="italic">{report.lawExplanation}</p>}
+        </div>
+      )}
+
+      {/* Description */}
+      <p className="text-sm border-t border-gray-300 pt-2 whitespace-pre-line">
+        {report.description}
+      </p>
+    </div>
+  );
+};
+
+// ----------------------------
+// Example List Component
+// ----------------------------
+const RefereeReportList: React.FC<{ reports: RefereeReport[] }> = ({ reports }) => {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {reports.map((r) => (
+        <RefereeReportCard key={r.id} report={r} />
+      ))}
+    </div>
+  );
+};
+
+export default RefereeReportList;
+
+// report file not working........

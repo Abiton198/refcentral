@@ -1,273 +1,341 @@
-// src/components/referee/reports/CardReportForm.tsx
+// CardReportForm.tsx - Corrected (Version 3)
 import React, { useState } from "react";
+import { db } from "@/lib/firebase";
+import { addDoc, collection, serverTimestamp, Timestamp } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { toast } from "@/components/ui/use-toast";
-import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
 
-// === MOST COMMON RED CARD OFFENCES (FIFA Laws) ===
-const RED_CARD_LAWS = [
-  "Serious foul play",
-  "Violent conduct",
-  "Spitting at an opponent or any other person",
-  "Denying an obvious goal-scoring opportunity (DOGSO) – handball",
-  "Denying an obvious goal-scoring opportunity (DOGSO) – foul",
-  "Using offensive, insulting or abusive language and/or gestures",
-  "Receiving a second caution in the same match",
-  "Deliberate handball to prevent a goal",
-  "Biting or spitting at someone",
-  "Throwing an object at the ball, opponent or match official",
-  "Entering the field without permission (violent conduct)",
-  "Leaving the field without permission (violent conduct)",
-  "Physical assault on a match official",
-  "Threatening a match official",
-  "Racial abuse or discrimination",
-  "Excessive celebration (removing shirt, covering head)",
-  "Entering the video operation room (VOR)",
+/* -----------------------------------------------------------
+   REAL WORLD RUGBY LAW — DATA
+   ----------------------------------------------------------- */
+const RED_LAWS = [
+  { number: "Law 9.12", title: "Striking / Punching", explanation: "Punching, striking or attempting to strike an opponent. Serious violent conduct." },
+  { number: "Law 9.13", title: "Dangerous High Tackle (Head/Neck Contact)", explanation: "High tackle with direct contact to the head or neck with high danger." },
+  { number: "Law 9.14", title: "Dangerous Lifting / Spear Tackle", explanation: "Player lifted and dropped or forced downward onto head/neck—automatic red card." },
+  { number: "Law 9.17", title: "Tackling a Player in the Air", explanation: "Dangerous contact with airborne player resulting in high risk of injury." },
+  { number: "Law 9.16", title: "Kicking an Opponent", explanation: "Deliberately kicking an opponent; especially dangerous to head." },
+  { number: "Law 9.18", title: "Stamping / Trampling", explanation: "Stamping or trampling on a player lying on the ground." },
+  { number: "Law 9.20", title: "Eye Gouging / Contact with Eyes", explanation: "Any contact with the eyes or eye area—major serious misconduct." },
+  { number: "Law 9.19", title: "Biting", explanation: "Biting an opponent—severe misconduct." },
+  { number: "Law 9.21", title: "Physical Assault on Match Official", explanation: "Any physical contact with intent or aggression towards an official." },
 ];
 
-interface Match {
+const YELLOW_LAWS = [
+  { number: "Law 10.1", title: "Repeated Infringements", explanation: "Multiple repeated infringements by same player or team." },
+  { number: "Law 10.2", title: "Dissent / Verbal Abuse", explanation: "Disrespectful language or gestures directed at the referee." },
+  { number: "Law 10.3", title: "Deliberate Infringement", explanation: "Stopping play illegally or preventing tactical advantage." },
+  { number: "Law 10.4", title: "Dangerous Play (Not Red Threshold)", explanation: "Dangerous or reckless actions that fall below red card severity." },
+  { number: "Law 10.5", title: "Illegal Entry / Hands in Ruck", explanation: "Entering a ruck illegally or using hands while not permitted." },
+  { number: "Law 10.6", title: "Offside Interference", explanation: "Interfering with play while offside." },
+];
+
+/* -----------------------------------------------------------
+   Helper: standardise stored type
+   ----------------------------------------------------------- */
+const getStoredType = (type: string) => {
+  if (type === "Red") return "red_card";
+  if (type === "Yellow") return "yellow_card";
+  return "incident"; // important: matches Firestore rules
+};
+
+/* -----------------------------------------------------------
+   Component Props
+   ----------------------------------------------------------- */
+interface MatchProps {
   id: string;
   homeTeam: string;
   awayTeam: string;
-  date: string;
+  date: string; // expected 'YYYY-MM-DD' or other ISO date-string
   venue?: string;
-  time?: string;
+  time?: string; // expected 'HH:mm' or 'HH:mm:ss' ideally
 }
 
 interface CardReportFormProps {
-  match: Match;
-  user: any;
+  match: MatchProps;
   onSuccess?: () => void;
 }
 
-export const CardReportForm: React.FC<CardReportFormProps> = ({ match, user, onSuccess }) => {
-  const [formData, setFormData] = useState({
-    playerFullName: "",
-    playerTeam: "Home",
+/* -----------------------------------------------------------
+   MAIN EXPORT — CARD REPORT FORM
+   ----------------------------------------------------------- */
+const CardReportForm: React.FC<CardReportFormProps> = ({ match, onSuccess }) => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+
+  const [cardType, setCardType] = useState<"Yellow" | "Red" | "Incident">("Yellow");
+
+  const [form, setForm] = useState({
+    playerName: "",
+    team: "Home",
     minute: "",
-    cardType: "Yellow" as "Yellow" | "Red",
-    lawBroken: "",
-    reason: "",
-    reporterSignature: "",
+    lawNumber: "",
+    description: "",
+    signature: "",
   });
 
-  const [submitting, setSubmitting] = useState(false);
-  const auth = getAuth();
-  const currentUser = auth.currentUser;
+  const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const lawList = cardType === "Red" ? RED_LAWS : cardType === "Yellow" ? YELLOW_LAWS : [];
+
+  const selectedLaw = form.lawNumber && lawList.find((l) => l.number === form.lawNumber);
+
+  /* -----------------------------------------------------------
+     Validate Form
+     ----------------------------------------------------------- */
+  const validate = () => {
+    if (!form.playerName.trim()) {
+      toast({ title: "Missing", description: "Player name is required.", variant: "destructive" });
+      return false;
+    }
+
+    if (!form.signature.trim()) {
+      toast({ title: "Missing", description: "Signature is required.", variant: "destructive" });
+      return false;
+    }
+
+    if ((cardType === "Red" || cardType === "Yellow") && !form.lawNumber) {
+      toast({ title: "Missing", description: "Select a law for this card.", variant: "destructive" });
+      return false;
+    }
+
+    return true;
+  };
+
+  /* -----------------------------------------------------------
+     Submit
+     ----------------------------------------------------------- */
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validate()) return;
+    if (saving) return; // Prevent double submit
 
-    if (!formData.playerFullName.trim()) {
-      toast({ title: "Required", description: "Player name is required.", variant: "destructive" });
-      return;
-    }
-    if (!formData.reporterSignature.trim()) {
-      toast({ title: "Required", description: "Signature is required.", variant: "destructive" });
-      return;
-    }
-    if (!currentUser) {
-      toast({ title: "Error", description: "You must be logged in.", variant: "destructive" });
-      return;
-    }
-
-    // Law Broken is required only for Red Cards
-    if (formData.cardType === "Red" && !formData.lawBroken) {
-      toast({ title: "Required", description: "Please select the Law Infringed for Red Card.", variant: "destructive" });
+    if (!user) {
+      toast({ title: "Error", description: "You must be signed in.", variant: "destructive" });
       return;
     }
 
     try {
-      setSubmitting(true);
+      setSaving(true);
 
+      // Build matchDateTime as Firestore Timestamp (if both date and time present)
+      const matchDateTime = match.date && match.time
+        ? Timestamp.fromDate(new Date(`${match.date}T${match.time}`))
+        : null;
+
+      // Build payload
       const payload: any = {
-        // Core
+        // Must match your Firestore rules
         type: "card_report",
-        matchId: match.id,
-        status: "submitted",
+        cardType: getStoredType(cardType),
+
+        matchId: String(match.id),
+        homeTeam: match.homeTeam ?? "",
+        awayTeam: match.awayTeam ?? "",
+        matchDate: match.date ?? "",
+        venue: match.venue ?? "",
+        matchTime: match.time ?? "",
+        matchDateTime: matchDateTime, // Firestore Timestamp or null
+
+        refereeId: user.uid,
+        refereeName: user.displayName ?? "",
+        refereeEmail: user.email ?? "",
+
+        playerName: form.playerName,
+        playerTeam: form.team,
+        minute: form.minute,
+        description: form.description || "No description provided",
+        reporterSignature: form.signature,
+
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-
-        // Ownership
-        refereeId: currentUser.uid,
-        refereeEmail: currentUser.email || "",
-        refereeName: currentUser.displayName || "Unknown Referee",
-
-        // Match Details (auto-filled)
-        homeTeam: match.homeTeam,
-        awayTeam: match.awayTeam,
-        matchDate: match.date,
-        venue: match.venue || "",
-        matchTime: match.time || "",
-
-        // Form Fields
-        playerFullName: formData.playerFullName.trim(),
-        playerTeam: formData.playerTeam,
-        cardType: formData.cardType,
-        minute: formData.minute.trim(),
-        lawBroken: formData.cardType === "Red" ? formData.lawBroken : "N/A",
-        reason: formData.reason.trim() || "No reason provided",
-        reporterSignature: formData.reporterSignature.trim(),
-
-        // Dashboard Compatibility
-        timeOfIncident: formData.minute.trim() || "",
-        description: formData.reason.trim() || "No reason provided",
-
-        reviewed: false,
-        executiveComment: "",
       };
 
-      console.log("Submitting card report:", payload);
+      // Add optional law fields only when present
+      if (selectedLaw) {
+        payload.lawNumber = selectedLaw.number;
+        payload.lawTitle = selectedLaw.title;
+        payload.lawExplanation = selectedLaw.explanation;
+      }
 
+      // Submit once
       await addDoc(collection(db, "reports"), payload);
 
-      toast({ title: "Success", description: `${formData.cardType} card report submitted.` });
+      toast({ title: "Success", description: `${cardType} report submitted successfully.` });
+
+      // Reset form
+      setForm({
+        playerName: "",
+        team: "Home",
+        minute: "",
+        lawNumber: "",
+        description: "",
+        signature: "",
+      });
+
       onSuccess?.();
     } catch (err: any) {
-      console.error("Submit error:", err);
+      console.error("CardReportForm submit error:", err);
       toast({
-        title: "Failed",
-        description: err.message.includes("permission")
-          ? "Check refereeId matches your UID."
-          : err.message,
+        title: "Error",
+        description: err?.message || "Could not submit report.",
         variant: "destructive",
       });
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
+  /* -----------------------------------------------------------
+     Render
+     ----------------------------------------------------------- */
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={onSubmit} className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Card Report</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-5">
 
-          {/* Match Info (Auto-Filled) */}
-          <div className="bg-gray-50 p-4 rounded-lg text-sm space-y-1">
-            <p><strong>Match:</strong> {match.homeTeam} vs {match.awayTeam}</p>
-            <p><strong>Date:</strong> {match.date}</p>
-            <p><strong>Venue:</strong> {match.venue || "—"}</p>
-            <p><strong>Time:</strong> {match.time || "—"}</p>
-            <p><strong>Referee:</strong> {currentUser?.displayName || "Loading..."}</p>
+        <CardContent className="space-y-6">
+          {/* CARD TYPE SELECTOR */}
+          <div>
+            <Label>Report Type</Label>
+            <div className="flex gap-2 mt-2">
+              <Button
+                type="button"
+                variant={cardType === "Yellow" ? "default" : "outline"}
+                className={cardType === "Yellow" ? "bg-yellow-400 hover:bg-yellow-500" : ""}
+                onClick={() => { setCardType("Yellow"); setForm({ ...form, lawNumber: "" }); }}
+              >
+                Yellow Card
+              </Button>
+
+              <Button
+                type="button"
+                variant={cardType === "Red" ? "default" : "outline"}
+                className={cardType === "Red" ? "bg-red-600 text-white hover:bg-red-700" : ""}
+                onClick={() => { setCardType("Red"); setForm({ ...form, lawNumber: "" }); }}
+              >
+                Red Card
+              </Button>
+
+              <Button
+                type="button"
+                variant={cardType === "Incident" ? "default" : "outline"}
+                className={cardType === "Incident" ? "bg-gray-600 text-white hover:bg-gray-700" : ""}
+                onClick={() => { setCardType("Incident"); setForm({ ...form, lawNumber: "" }); }}
+              >
+                Incident
+              </Button>
+            </div>
           </div>
 
-          {/* Card Type Dropdown */}
+          {/* PLAYER NAME */}
           <div>
-            <Label>Card Type *</Label>
-            <Select
-              value={formData.cardType}
-              onValueChange={(value: "Yellow" | "Red") => setFormData({ ...formData, cardType: value, lawBroken: "" })}
-            >
-              <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Select card type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Yellow">Yellow Card</SelectItem>
-                <SelectItem value="Red">Red Card</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Player Name */}
-          <div>
-            <Label>Player Full Name *</Label>
+            <Label>Player Name</Label>
             <Input
-              value={formData.playerFullName}
-              onChange={(e) => setFormData({ ...formData, playerFullName: e.target.value })}
-              placeholder="e.g. Xolani Haridi"
-              required
+              value={form.playerName}
+              onChange={(e) => setForm({ ...form, playerName: e.target.value })}
+              placeholder="Full name of player"
             />
           </div>
 
-          {/* Player Team Dropdown */}
+          {/* TEAM */}
           <div>
-            <Label>Player Team *</Label>
+            <Label>Team</Label>
             <Select
-              value={formData.playerTeam}
-              onValueChange={(value: "Home" | "Away") => setFormData({ ...formData, playerTeam: value })}
+              value={form.team}
+              onValueChange={(v) => setForm({ ...form, team: v })}
             >
-              <SelectTrigger className="mt-1">
+              <SelectTrigger>
                 <SelectValue placeholder="Select team" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Home">Home – {match.homeTeam}</SelectItem>
-                <SelectItem value="Away">Away – {match.awayTeam}</SelectItem>
+                <SelectItem value="Home">{match.homeTeam}</SelectItem>
+                <SelectItem value="Away">{match.awayTeam}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Minute */}
+          {/* MINUTE */}
           <div>
-            <Label>Minute of Incident</Label>
+            <Label>Minute of incident</Label>
             <Input
-              type="text"
-              value={formData.minute}
-              onChange={(e) => setFormData({ ...formData, minute: e.target.value })}
-              placeholder="e.g. 65'"
+              value={form.minute}
+              onChange={(e) => setForm({ ...form, minute: e.target.value })}
+              placeholder="e.g., 55'"
             />
           </div>
 
-          {/* Law Infringed – Only for Red Card */}
-          {formData.cardType === "Red" && (
+          {/* LAW SELECTION */}
+          {(cardType === "Red" || cardType === "Yellow") && (
             <div>
-              <Label>Law Infringed *</Label>
+              <Label>{cardType} Card Offence</Label>
               <Select
-                value={formData.lawBroken}
-                onValueChange={(value) => setFormData({ ...formData, lawBroken: value })}
+                value={form.lawNumber}
+                onValueChange={(v) => setForm({ ...form, lawNumber: v })}
               >
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select the law broken" />
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Law" />
                 </SelectTrigger>
-                <SelectContent className="max-h-60">
-                  {RED_CARD_LAWS.map((law) => (
-                    <SelectItem key={law} value={law}>
-                      {law}
+                <SelectContent>
+                  {lawList.map((law) => (
+                    <SelectItem key={law.number} value={law.number}>
+                      {law.number} — {law.title}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
+              {selectedLaw && (
+                <div className="p-3 mt-2 bg-gray-50 border-l-2 text-sm">
+                  <strong>{selectedLaw.number} — {selectedLaw.title}</strong>
+                  <p className="text-xs mt-1">{selectedLaw.explanation}</p>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Reason */}
+          {/* DESCRIPTION */}
           <div>
-            <Label>Reason for Card</Label>
+            <Label>Description</Label>
             <Textarea
-              value={formData.reason}
-              onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
-              placeholder="Brief description of the offence..."
-              rows={3}
+              rows={4}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Describe what happened"
             />
           </div>
 
-          {/* Signature */}
+          {/* SIGNATURE */}
           <div>
-            <Label>Reporter Signature *</Label>
+            <Label>Signature</Label>
             <Input
-              value={formData.reporterSignature}
-              onChange={(e) => setFormData({ ...formData, reporterSignature: e.target.value })}
+              value={form.signature}
+              onChange={(e) => setForm({ ...form, signature: e.target.value })}
               placeholder="Type your full name"
-              required
             />
-            <p className="text-xs text-gray-500 mt-1">By signing, you confirm this report is accurate.</p>
           </div>
 
-          {/* Submit */}
-          <Button type="submit" className="w-full" disabled={submitting}>
-            {submitting ? "Submitting..." : `Submit ${formData.cardType} Card Report`}
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving ? "Submitting..." : `Submit ${cardType} Report`}
           </Button>
         </CardContent>
       </Card>
     </form>
   );
 };
+
+export default CardReportForm;

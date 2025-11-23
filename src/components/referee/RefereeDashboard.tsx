@@ -29,7 +29,8 @@ import {
   CheckCircle2, XCircle as XCircleIcon, Trophy as TrophyIcon, Send, User, Calendar, Clock, MapPin, ChevronDown
 } from "lucide-react";
 import { LawsOfTheGameWidget } from "@/components/LawsOfTheGameWidget";
-import { format } from "date-fns";
+import { format, isValid, parseISO } from "date-fns";
+
 
 export const RefereeDashboard: React.FC = () => {
   const [appointments, setAppointments] = useState<any[]>([]);
@@ -55,6 +56,52 @@ export const RefereeDashboard: React.FC = () => {
   const currentRefereeId = user?.uid || "";
   const currentRefereeEmail = user?.email || "";
   const currentRefereeName = user?.displayName || `${user?.email?.split("@")[0] || ""}`;
+
+// TIME SAFE FORMATTER
+const safeFormat = (ts: any) => {
+  if (!ts) return null;
+
+  // Firestore timestamp
+  if (ts.seconds) return new Date(ts.seconds * 1000);
+
+  // ISO string
+  if (typeof ts === "string" && !isNaN(Date.parse(ts))) {
+    return new Date(ts);
+  }
+
+  return null;
+};
+
+// "TIME AGO" FORMATTER
+const timeAgo = (date: Date | null) => {
+  if (!date) return "Unknown time";
+
+  const diff = (Date.now() - date.getTime()) / 1000;
+  if (diff < 60) return `${Math.floor(diff)}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+};
+
+// Detect action type → color + icon
+const actionStyle = (action: string) => {
+  const text = action.toLowerCase();
+
+  if (text.includes("score"))
+    return { color: "text-emerald-700", icon: "🏆" };
+
+  if (text.includes("created"))
+    return { color: "text-blue-700", icon: "📝" };
+
+  if (text.includes("updated"))
+    return { color: "text-indigo-700", icon: "✏️" };
+
+  if (text.includes("deleted") || text.includes("removed"))
+    return { color: "text-red-700", icon: "🗑️" };
+
+  return { color: "text-gray-700", icon: "📌" };
+};
+
 
   const updateLastActive = async () => {
     if (!currentRefereeId) return;
@@ -507,42 +554,74 @@ export const RefereeDashboard: React.FC = () => {
                           </div>
                         )}
 
+                        
                         {/* AUDIT TRAIL */}
-                        <div className="border-t pt-3">
-                          <button
-                            onClick={() => setExpandedTrail(expandedTrail === apt.id ? null : apt.id)}
-                            className="w-full flex justify-between items-center text-xs font-medium text-gray-600 hover:text-gray-800"
-                          >
-                            <span className="flex items-center gap-1">
-                              <ChevronDown className={`w-3 h-3 transition ${expandedTrail === apt.id ? "rotate-180" : ""}`} />
-                              Activity Trail ({trail.length})
-                            </span>
-                          </button>
+                      <div className="border-t pt-3">
+                        <button
+                          onClick={() => setExpandedTrail(expandedTrail === apt.id ? null : apt.id)}
+                          className="w-full flex justify-between items-center text-xs font-semibold text-gray-700 hover:text-gray-900"
+                        >
+                          <span className="flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                expandedTrail === apt.id ? "rotate-180" : ""
+                              }`}
+                            />
+                            Activity Trail ({trail.length})
+                          </span>
+                        </button>
 
-                          {expandedTrail === apt.id && (
-                            <div className="mt-2 space-y-2 text-xs">
-                              {trail.map((entry: any, i: number) => (
-                                <div key={i} className="flex items-start gap-2">
-                                  <User className="w-3 h-3 mt-0.5 text-gray-400" />
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium text-gray-700">{entry.by}</span>
-                                      {entry.action.includes("Final Score") && (
-                                        <span className="text-emerald-600 font-bold text-sm">
-                                          {entry.action.split(": ")[1]}
+                        {expandedTrail === apt.id && (
+                          <div className="mt-3 space-y-3 text-xs animate-fadeIn">
+
+                            {[...trail]
+                              .sort((a, b) => {
+                                const da = safeFormat(a.timestamp)?.getTime() || 0;
+                                const db = safeFormat(b.timestamp)?.getTime() || 0;
+                                return db - da; // newest first
+                              })
+                              .map((entry: any, i: number) => {
+                                const tsDate = safeFormat(entry.timestamp);
+                                const { color, icon } = actionStyle(entry.action);
+
+                                return (
+                                  <div key={i} className="flex items-start gap-3 p-2 rounded-lg bg-gray-50">
+                                    {/* Icon */}
+                                    <div className="text-lg">{icon}</div>
+
+                                    <div className="flex-1">
+                                      {/* BY + ACTION */}
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-gray-800">{entry.by}</span>
+                                        <span className={`${color} font-semibold`}>
+                                          {entry.action}
                                         </span>
+                                      </div>
+
+                                      {/* OPTIONAL: show "Final Score: 34–10" number nicely */}
+                                      {entry.action.includes("Final Score:") && (
+                                        <p className="text-emerald-700 mt-1 font-bold">
+                                          {entry.action.split(": ")[1]}
+                                        </p>
                                       )}
+
+                                      {/* Time & timestamp */}
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <span className="text-gray-500">{timeAgo(tsDate)}</span>
+                                        <span className="text-gray-400">•</span>
+                                        <span className="text-gray-400">
+                                          {tsDate ? tsDate.toLocaleString() : "Unknown"}
+                                        </span>
+                                      </div>
                                     </div>
-                                    <p className="text-gray-500">{entry.action.split(": ")[0]}</p>
-                                    <p className="text-gray-400">
-                                      {format(new Date(entry.timestamp), "dd MMM yyyy, HH:mm")}
-                                    </p>
                                   </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                                );
+                              })}
+                          </div>
+                        )}
+                      </div>
+{/* ========Trail end======== */}
+                        
                       </div>
                     </Card>
                   );
