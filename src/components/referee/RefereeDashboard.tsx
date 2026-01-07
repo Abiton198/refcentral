@@ -1,46 +1,48 @@
-// src/pages/referee/RefereeDashboard.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { Card, StatCard } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/input";
+import { Label } from "../ui/label"; // Added missing import
 import { db } from "../../lib/firebase";
 import { RefereeUnifiedReportCenter } from "./reports/RefereeUnifiedReportCenter";
 import { RefereeProfiles } from "../executive/RefereeProfiles";
 import {
-  Timestamp,
-  getDoc,
-  updateDoc,
-  setDoc,
-  doc,
-  collection,
-  query,
-  where,
-  onSnapshot,
-  arrayUnion,
-  serverTimestamp,
-  addDoc,
+  Timestamp, getDoc, updateDoc, setDoc, doc, collection, query, where, 
+  onSnapshot, arrayUnion, serverTimestamp, addDoc
 } from "firebase/firestore";
 import { getAuth, signOut, updateProfile as updateAuthProfile } from "firebase/auth";
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { toast } from "@/components/ui/use-toast";
 import {
   Menu, X, LogOut, Camera, CheckCircle, AlertCircle, FileText, Trophy, XCircle,
-  CheckCircle2, XCircle as XCircleIcon, Trophy as TrophyIcon, Send, User, Calendar, Clock, MapPin, ChevronDown
+  CheckCircle2, Send, User, Calendar, Clock, MapPin, ChevronDown,
+  UserPlus, Search, Sparkles, ShieldCheck, ClipboardCheck, Plus
 } from "lucide-react";
 import { LawsOfTheGameWidget } from "@/components/LawsOfTheGameWidget";
-import { format, isValid, parseISO } from "date-fns";
-
+import { PlayerRegistrationModal } from "./PlayerRegistrationModal";
 
 export const RefereeDashboard: React.FC = () => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+  const currentRefereeName = user?.displayName || "Referee";
+  const currentRefereeId = user?.uid || "";
+
+  // Core States
   const [appointments, setAppointments] = useState<any[]>([]);
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [viewProfile, setViewProfile] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showReportCenter, setShowReportCenter] = useState<string | null>(null);
+  const [showPlayerReg, setShowPlayerReg] = useState(false);
   const [expandedTrail, setExpandedTrail] = useState<string | null>(null);
+  const [showReportCenter, setShowReportCenter] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [viewProfile, setViewProfile] = useState(false);
+
+  // Match Logic States
+  const [selectedMatchPlayers, setSelectedMatchPlayers] = useState<{ [key: string]: any[] }>({});
+  const [activeSelectionTeam, setActiveSelectionTeam] = useState<{ id: string, side: 'home' | 'away', teamName: string } | null>(null);
+  const [teamDatabase, setTeamDatabase] = useState<any[]>([]);
 
   // Result Form
   const [resultForm, setResultForm] = useState({
@@ -50,614 +52,302 @@ export const RefereeDashboard: React.FC = () => {
     notes: "",
   });
 
-  const auth = getAuth();
-  const user = auth.currentUser;
-  const storage = getStorage();
-  const currentRefereeId = user?.uid || "";
-  const currentRefereeEmail = user?.email || "";
-  const currentRefereeName = user?.displayName || `${user?.email?.split("@")[0] || ""}`;
-
-// TIME SAFE FORMATTER
-const safeFormat = (ts: any) => {
-  if (!ts) return null;
-
-  // Firestore timestamp
-  if (ts.seconds) return new Date(ts.seconds * 1000);
-
-  // ISO string
-  if (typeof ts === "string" && !isNaN(Date.parse(ts))) {
-    return new Date(ts);
-  }
-
-  return null;
-};
-
-// "TIME AGO" FORMATTER
-const timeAgo = (date: Date | null) => {
-  if (!date) return "Unknown time";
-
-  const diff = (Date.now() - date.getTime()) / 1000;
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-};
-
-// Detect action type → color + icon
-const actionStyle = (action: string) => {
-  const text = action.toLowerCase();
-
-  if (text.includes("score"))
-    return { color: "text-emerald-700", icon: "🏆" };
-
-  if (text.includes("created"))
-    return { color: "text-blue-700", icon: "📝" };
-
-  if (text.includes("updated"))
-    return { color: "text-indigo-700", icon: "✏️" };
-
-  if (text.includes("deleted") || text.includes("removed"))
-    return { color: "text-red-700", icon: "🗑️" };
-
-  return { color: "text-gray-700", icon: "📌" };
-};
-
-
-  const updateLastActive = async () => {
-    if (!currentRefereeId) return;
-    try {
-      await updateDoc(doc(db, "referees", currentRefereeId), { lastActive: serverTimestamp() });
-    } catch (err) {
-      console.error("Failed to update lastActive:", err);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      toast({ title: "Signed Out" });
-      window.location.href = "/";
-    } catch {
-      toast({ title: "Error", description: "Logout failed.", variant: "destructive" });
-    }
-  };
-
-  // Profile
+  // 1. SAFE DATA FETCHING
   useEffect(() => {
-    const fetchProfile = async () => {
-      if (!currentRefereeId) return;
-      const refDoc = doc(db, "referees", currentRefereeId);
-      const snap = await getDoc(refDoc);
-      if (snap.exists()) {
-        setProfile({ id: snap.id, ...snap.data() });
-      } else {
-        const defaultProfile = {
-          uid: currentRefereeId,
-          email: currentRefereeEmail,
-          name: currentRefereeName,
-          createdAt: new Date(),
-          status: "active",
-          availabilityStatus: "available",
-        };
-        await setDoc(refDoc, defaultProfile);
-        setProfile(defaultProfile);
-      }
-    };
-    fetchProfile();
-  }, [currentRefereeId, currentRefereeEmail, currentRefereeName]);
-
-  // Auto lastActive
-  useEffect(() => {
-    if (!currentRefereeId) return;
-    updateLastActive();
-    const interval = setInterval(updateLastActive, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [currentRefereeId]);
-
-  // Photo upload
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentRefereeId) return;
-    setUploading(true);
-    try {
-      const fileRef = storageRef(storage, `referees/${currentRefereeId}/profile.jpg`);
-      const uploadTask = uploadBytesResumable(fileRef, file);
-      uploadTask.on("state_changed", null, () => setUploading(false), async () => {
-        const url = await getDownloadURL(fileRef);
-        await updateDoc(doc(db, "referees", currentRefereeId), { photoURL: url });
-        if (auth.currentUser) await updateAuthProfile(auth.currentUser, { photoURL: url });
-        setProfile((p: any) => ({ ...p, photoURL: url }));
-        toast({ title: "Photo updated" });
-        updateLastActive();
-        setUploading(false);
-      });
-    } catch {
-      setUploading(false);
-      toast({ title: "Error", variant: "destructive" });
-    }
-  };
-
-  const toggleAvailability = async () => {
-    if (!profile?.id) return;
-    const newStatus = profile.availabilityStatus === "available" ? "unavailable" : "available";
-    await updateDoc(doc(db, "referees", profile.id), { availabilityStatus: newStatus });
-    setProfile((p: any) => ({ ...p, availabilityStatus: newStatus }));
-    toast({ title: `Now ${newStatus}` });
-    updateLastActive();
-  };
-
-  // Appointments
-  useEffect(() => {
-    if (!currentRefereeName && !currentRefereeEmail) return;
-
-    const queries = [];
-    if (currentRefereeName) {
-      queries.push(query(collection(db, "appointments"), where("referee", "==", currentRefereeName)));
-      queries.push(query(collection(db, "appointments"), where("ar", "==", currentRefereeName)));
-    }
-    if (currentRefereeEmail) {
-      queries.push(query(collection(db, "appointments"), where("refereeEmail", "==", currentRefereeEmail)));
-      queries.push(query(collection(db, "appointments"), where("arEmail", "==", currentRefereeEmail)));
-    }
-
-    const unsubs: any[] = [];
-    let combined: any[] = [];
-
-    queries.forEach((q, index) => {
-      const role = index % 2 === 0 ? "referee" : "ar";
-      const unsub = onSnapshot(q, (snap) => {
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data(), _role: role }));
-        combined = [...docs, ...combined.filter(a => a._role !== role)];
-        setAppointments(deduplicate(combined));
-      });
-      unsubs.push(unsub);
+    const unsub = onSnapshot(collection(db, "players"), (snap) => {
+      setTeamDatabase(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    function deduplicate(list: any[]) {
-      const seen = new Set();
-      return list.filter(item => {
-        if (seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
+    if (user?.email) {
+      const q = query(collection(db, "appointments"), where("refereeEmail", "==", user.email));
+      const unsubApt = onSnapshot(q, (snap) => {
+        setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoading(false);
       });
+      return () => { unsub(); unsubApt(); };
     }
-
-    setLoading(false);
-    return () => unsubs.forEach(u => u());
-  }, [currentRefereeName, currentRefereeEmail]);
-
-  // Listen to match_results → update appointments with final score
-  useEffect(() => {
-    const q = query(collection(db, "match_results"));
-    const unsub = onSnapshot(q, (snap) => {
-      snap.docChanges().forEach(change => {
-        if (change.type === "added" || change.type === "modified") {
-          const data = change.doc.data();
-          const aptId = data.appointmentId;
-          if (aptId) {
-            const scoreEntry = {
-              by: data.submittedByName || "Referee",
-              action: `Final Score: ${data.homeScore} - ${data.awayScore}`,
-              timestamp: data.submittedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
-            };
-
-            setAppointments(prev => prev.map(apt => {
-              if (apt.id === aptId) {
-                return {
-                  ...apt,
-                  finalResult: `${data.homeScore} - ${data.awayScore}`,
-                  resultNotes: data.notes || "",
-                  auditTrail: [scoreEntry, ...(apt.auditTrail || [])].slice(0, 50),
-                };
-              }
-              return apt;
-            }));
-          }
-        }
-      });
-    });
     return () => unsub();
-  }, []);
+  }, [user]);
 
-  // Accept/Decline
-  const handleResponse = async (id: string, response: "accepted" | "rejected", role: string) => {
-    try {
-      const aptRef = doc(db, "appointments", id);
-      const responseObj = { status: response, respondedAt: Timestamp.now() };
-
-      await updateDoc(aptRef, {
-        [`responses.${role}`]: responseObj,
-        status: response,
-        auditTrail: arrayUnion({
-          by: currentRefereeEmail || currentRefereeName,
-          action: response === "accepted" ? "Accepted" : "Rejected",
-          timestamp: new Date().toISOString(),
-        }),
-      });
-
-      setAppointments(prev => prev.map(apt => 
-        apt.id === id 
-          ? { ...apt, responses: { ...apt.responses, [role]: responseObj }, status: response }
-          : apt
-      ));
-
-      toast({ title: response === "accepted" ? "Accepted" : "Declined" });
-      updateLastActive();
-    } catch (err) {
-      console.error("Response failed:", err);
-      toast({ title: "Error", description: "Failed to respond.", variant: "destructive" });
-    }
+  // 2. HELPERS (Null Safe)
+  const canSubmitResult = (apt: any) => {
+    if (!apt) return false;
+    const homePlayers = selectedMatchPlayers[`${apt.id}_home`]?.length || 0;
+    const awayPlayers = selectedMatchPlayers[`${apt.id}_away`]?.length || 0;
+    return homePlayers > 0 && awayPlayers > 0;
   };
 
-  // SUBMIT RESULT
-  const handleSubmitResult = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const { appointmentId, homeScore, awayScore, notes } = resultForm;
-    if (!homeScore || !awayScore || !appointmentId) {
-      toast({ title: "Error", description: "Please fill in scores.", variant: "destructive" });
-      return;
-    }
-
-    try {
-      const resultData = {
-        appointmentId,
-        homeScore: parseInt(homeScore),
-        awayScore: parseInt(awayScore),
-        notes: notes.trim(),
-        submittedBy: currentRefereeId,
-        submittedByName: currentRefereeName,
-        submittedAt: serverTimestamp(),
-        status: "pending_review",
-      };
-
-      await addDoc(collection(db, "match_results"), resultData);
-
-      const scoreEntry = {
-        by: currentRefereeName,
-        action: `Final Score: ${homeScore} - ${awayScore}`,
-        timestamp: new Date().toISOString(),
-      };
-
-      await updateDoc(doc(db, "appointments", appointmentId), {
-        resultSubmitted: true,
-        resultStatus: "pending_review",
-        finalResult: `${homeScore} - ${awayScore}`,
-        resultNotes: notes.trim(),
-        auditTrail: arrayUnion(scoreEntry),
-      });
-
-      // Update local state
-      setAppointments(prev => prev.map(apt =>
-        apt.id === appointmentId
-          ? {
-              ...apt,
-              resultSubmitted: true,
-              finalResult: `${homeScore} - ${awayScore}`,
-              resultNotes: notes.trim(),
-              auditTrail: [scoreEntry, ...(apt.auditTrail || [])].slice(0, 50),
-            }
-          : apt
-      ));
-
-      setResultForm({ appointmentId: "", homeScore: "", awayScore: "", notes: "" });
-      toast({ title: "Result Submitted", description: "Pending review." });
-      updateLastActive();
-    } catch (err) {
-      console.error("Result submission failed:", err);
-      toast({ title: "Error", description: "Failed to submit result.", variant: "destructive" });
-    }
+  const handlePlayerToggle = (matchKey: string, player: any) => {
+    setSelectedMatchPlayers(prev => {
+      const current = prev[matchKey] || [];
+      const exists = current.find(p => p.id === player.id);
+      if (exists) {
+        return { ...prev, [matchKey]: current.filter(p => p.id !== player.id) };
+      }
+      return { ...prev, [matchKey]: [...current, player] };
+    });
   };
 
-  const pending = appointments.filter(a => 
-    !a.responses?.[a._role]?.status || a.responses[a._role].status === "pending"
-  ).length;
-  const accepted = appointments.filter(a => a.responses?.[a._role]?.status === "accepted").length;
-  const rejected = appointments.filter(a => a.responses?.[a._role]?.status === "rejected").length;
-
-  if (viewProfile) {
-    return (
-      <div className="p-4 sm:p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold">My Profile</h2>
-          <Button variant="outline" size="sm" onClick={() => setViewProfile(false)}>Back</Button>
-        </div>
-        <RefereeProfiles currentRefereeId={currentRefereeId} editable />
-      </div>
-    );
+  // 3. RESULT SUBMISSION HANDLER
+const handleSubmitResult = async (aptId: string) => {
+  // 1. Validation check
+  if (!resultForm.homeScore || !resultForm.awayScore) {
+    toast({
+      variant: "destructive",
+      title: "Missing Scores",
+      description: "Please enter scores for both teams before submitting.",
+    });
+    return;
   }
+
+  try {
+    const aptRef = doc(db, "appointments", aptId);
+    
+    // 2. Prepare the data
+    const finalResult = `${resultForm.homeScore} - ${resultForm.awayScore}`;
+    const homeSquad = selectedMatchPlayers[`${aptId}_home`] || [];
+    const awaySquad = selectedMatchPlayers[`${aptId}_away`] || [];
+
+    // 3. Update Firestore
+    await updateDoc(aptRef, {
+      resultSubmitted: true,
+      finalResult: finalResult,
+      homeScore: resultForm.homeScore,
+      awayScore: resultForm.awayScore,
+      homeSquad: homeSquad,
+      awaySquad: awaySquad,
+      submittedAt: serverTimestamp(),
+      submittedBy: currentRefereeId
+    });
+
+    // 4. Success feedback
+    toast({
+      title: "Result Submitted!",
+      description: `Final score ${finalResult} has been recorded.`,
+    });
+
+    // 5. Clear the form
+    setResultForm({ appointmentId: "", homeScore: "", awayScore: "", notes: "" });
+
+  } catch (error) {
+    console.error("Submission error:", error);
+    toast({
+      variant: "destructive",
+      title: "Error",
+      description: "Failed to save match result. Check your connection.",
+    });
+  }
+};
+
+// Logout Handler
+  const handleLogout = async () => {
+  try {
+    await signOut(auth);
+    // Use navigate if you have react-router-dom, otherwise window.location
+    window.location.href = "/"; 
+    toast({
+      title: "Logged out successfully",
+      description: "Redirecting to home page...",
+    });
+  } catch (error) {
+    toast({
+      variant: "destructive",
+      title: "Logout failed",
+      description: "Please try again.",
+    });
+  }
+};
+  // 3. UI RENDER (With Loading Guard)
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-emerald-50">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-emerald-600"></div>
+    </div>
+  );
 
   return (
-    <>
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-50 p-4 pb-24 sm:pb-8">
-        <div className="max-w-4xl mx-auto space-y-6">
-
-          {/* Mobile Header */}
-          <div className="sm:hidden bg-white rounded-xl shadow-sm p-4 mb-4">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2">
-                  {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-                </button>
-                <div>
-                  <h2 className="text-xl font-bold">Referee</h2>
-                  <button onClick={toggleAvailability} className="flex items-center gap-1 text-xs">
-                    <span className={`w-2 h-2 rounded-full ${profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"}`} />
-                    <span className={profile?.availabilityStatus === "available" ? "text-green-700" : "text-red-600"}>
-                      {profile?.availabilityStatus === "available" ? "Available" : "Unavailable"}
-                    </span>
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <img
-                    src={profile?.photoURL || "/default-avatar.png"}
-                    onClick={() => setViewProfile(true)}
-                    className={`w-10 h-10 rounded-full border-2 ${uploading ? "animate-pulse opacity-60" : "border-emerald-500"} cursor-pointer`}
-                    alt="profile"
-                  />
-                  <label className="absolute bottom-0 right-0 bg-emerald-600 text-white text-xs p-1 rounded cursor-pointer">
-                    <Camera className="w-3 h-3" />
-                    <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-                  </label>
-                </div>
-                <Button size="sm" variant=".ghost" onClick={handleLogout} className="text-red-600">
-                  <LogOut className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-            {mobileMenuOpen && (
-              <div className="mt-4 pt-4 border-t space-y-2">
-                <button onClick={() => { setViewProfile(true); setMobileMenuOpen(false); }} className="w-full text-left py-2 text-sm font-medium text-gray-700">
-                  My Profile
-                </button>
-                <button onClick={handleLogout} className="w-full text-left py-2 text-sm font-medium text-red-600">
-                  Logout
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Desktop Header */}
-          <div className="hidden sm:flex justify-between items-center bg-white p-6 rounded-xl shadow-sm">
-            <div>
-              <h2 className="text-3xl font-bold">Referee Dashboard</h2>
-              <p className="text-gray-600">Full match history with final score</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <button onClick={toggleAvailability} className="flex items-center gap-2">
-                <span className={`w-3 h-3 rounded-full ${profile?.availabilityStatus === "available" ? "bg-green-500" : "bg-red-500"}`} />
-                <span className="font-medium">{profile?.availabilityStatus === "available" ? "Available" : "Unavailable"}</span>
-              </button>
-              <div className="relative">
-                <img src={profile?.photoURL || "/default-avatar.png"} className="w-12 h-12 rounded-full border-2 border-emerald-500 cursor-pointer" onClick={() => setViewProfile(true)} />
-                <label className="absolute bottom-0 right-0 bg-emerald-600 text-white p-1 rounded cursor-pointer">
-                  <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-                </label>
-              </div>
-              <Button variant="outline" onClick={handleLogout} className="text-red-600 border-red-600">Logout</Button>
-            </div>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <StatCard title="Pending" value={pending} icon={<AlertCircle className="w-5 h-5" />} color="amber" />
-            <StatCard title="Accepted" value={accepted} icon={<CheckCircle className="w-5 h-5" />} color="emerald" />
-            <StatCard title="Rejected" value={rejected} icon={<XCircleIcon className="w-5 h-5" />} color="red" />
-            <StatCard title="Total" value={appointments.length} icon={<TrophyIcon className="w-5 h-5" />} color="purple" />
-          </div>
-
-          {/* Appointments */}
+    <div className="min-h-screen bg-[#f8fafc] pb-20">
+      
+      {/* SPARKLY TOP BAR */}
+      <div className="bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 p-6 text-white shadow-lg relative overflow-hidden">
+        <div className="max-w-5xl mx-auto flex justify-between items-center relative z-10">
           <div>
-            <h3 className="text-xl sm:text-2xl font-bold mb-3">Appointments</h3>
-            {loading ? (
-              <p className="text-center py-8 text-gray-500">Loading...</p>
-            ) : appointments.length === 0 ? (
-              <p className="text-center py-8 text-gray-500">No appointments.</p>
-            ) : (
-              <div className="space-y-4">
-                {appointments.map((apt) => {
-                  const status = apt.responses?.[apt._role]?.status || "pending";
-                  const role = apt._role === "referee" ? "Referee" : "AR";
-                  const trail = (apt.auditTrail || []).sort((a: any, b: any) => 
-                    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-                  );
-
-                  return (
-                    <Card key={apt.id} className="p-4 shadow-sm">
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="font-bold text-lg">{apt.homeTeam} vs {apt.awayTeam}</h4>
-                            <div className="flex flex-wrap gap-2 text-xs text-gray-600 mt-1">
-                              <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {apt.date}</span>
-                              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {apt.time}</span>
-                              <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {apt.venue}</span>
-                            </div>
-                            <p className="text-xs text-emerald-700 font-medium mt-1">Role: {role}</p>
-                          </div>
-                          <div className="text-right">
-                            <Badge variant={status === "accepted" ? "success" : status === "rejected" ? "danger" : "warning"}>
-                              {status.toUpperCase()}
-                            </Badge>
-                            {apt.finalResult && (
-                              <p className="text-lg font-bold text-emerald-600 mt-1">
-                                {apt.finalResult}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        {status === "pending" && (
-                          <div className="flex gap-2">
-                            <Button size="sm" className="flex-1 flex items-center justify-center gap-1" onClick={() => handleResponse(apt.id, "accepted", apt._role)}>
-                              <CheckCircle2 className="w-4 h-4" /> Accept
-                            </Button>
-                            <Button size="sm" variant="danger" className="flex-1 flex items-center justify-center gap-1" onClick={() => handleResponse(apt.id, "rejected", apt._role)}>
-                              <XCircleIcon className="w-4 h-4" /> Decline
-                            </Button>
-                          </div>
-                        )}
-
-                        {status === "accepted" && (
-                          <div className="space-y-3">
-                            {/* RESULT FORM */}
-                            {!apt.resultSubmitted && (
-                              <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-                                <h5 className="font-semibold text-sm mb-2 flex items-center gap-1">
-                                  <TrophyIcon className="w-4 h-4" /> Submit Result
-                                </h5>
-                                <form onSubmit={handleSubmitResult} className="space-y-2">
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      placeholder={apt.homeTeam}
-                                      value={resultForm.appointmentId === apt.id ? resultForm.homeScore : ""}
-                                      onChange={(e) => setResultForm({ ...resultForm, appointmentId: apt.id, homeScore: e.target.value })}
-                                      required
-                                    />
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      placeholder={apt.awayTeam}
-                                      value={resultForm.appointmentId === apt.id ? resultForm.awayScore : ""}
-                                      onChange={(e) => setResultForm({ ...resultForm, appointmentId: apt.id, awayScore: e.target.value })}
-                                      required
-                                    />
-                                  </div>
-                                  <Input
-                                    placeholder="Notes (optional)"
-                                    value={resultForm.appointmentId === apt.id ? resultForm.notes : ""}
-                                    onChange={(e) => setResultForm({ ...resultForm, appointmentId: apt.id, notes: e.target.value })}
-                                  />
-                                  <Button type="submit" size="sm" className="w-full">
-                                    <Send className="w-3 h-3 mr-1" /> Submit Result
-                                  </Button>
-                                </form>
-                              </div>
-                            )}
-
-                            {apt.resultSubmitted && !apt.finalResult && (
-                              <p className="text-xs text-emerald-600 font-medium">Result submitted (pending)</p>
-                            )}
-
-                            {/* REPORT BUTTON */}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="w-full flex items-center justify-center gap-1 border-amber-600 text-amber-700"
-                              onClick={() => setShowReportCenter(apt.id)}
-                            >
-                              <FileText className="w-4 h-4" /> Match Report
-                            </Button>
-                          </div>
-                        )}
-
-                        
-                        {/* AUDIT TRAIL */}
-                      <div className="border-t pt-3">
-                        <button
-                          onClick={() => setExpandedTrail(expandedTrail === apt.id ? null : apt.id)}
-                          className="w-full flex justify-between items-center text-xs font-semibold text-gray-700 hover:text-gray-900"
-                        >
-                          <span className="flex items-center gap-1">
-                            <ChevronDown
-                              className={`w-3 h-3 transition-transform ${
-                                expandedTrail === apt.id ? "rotate-180" : ""
-                              }`}
-                            />
-                            Activity Trail ({trail.length})
-                          </span>
-                        </button>
-
-                        {expandedTrail === apt.id && (
-                          <div className="mt-3 space-y-3 text-xs animate-fadeIn">
-
-                            {[...trail]
-                              .sort((a, b) => {
-                                const da = safeFormat(a.timestamp)?.getTime() || 0;
-                                const db = safeFormat(b.timestamp)?.getTime() || 0;
-                                return db - da; // newest first
-                              })
-                              .map((entry: any, i: number) => {
-                                const tsDate = safeFormat(entry.timestamp);
-                                const { color, icon } = actionStyle(entry.action);
-
-                                return (
-                                  <div key={i} className="flex items-start gap-3 p-2 rounded-lg bg-gray-50">
-                                    {/* Icon */}
-                                    <div className="text-lg">{icon}</div>
-
-                                    <div className="flex-1">
-                                      {/* BY + ACTION */}
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-bold text-gray-800">{entry.by}</span>
-                                        <span className={`${color} font-semibold`}>
-                                          {entry.action}
-                                        </span>
-                                      </div>
-
-                                      {/* OPTIONAL: show "Final Score: 34–10" number nicely */}
-                                      {entry.action.includes("Final Score:") && (
-                                        <p className="text-emerald-700 mt-1 font-bold">
-                                          {entry.action.split(": ")[1]}
-                                        </p>
-                                      )}
-
-                                      {/* Time & timestamp */}
-                                      <div className="flex items-center gap-2 mt-1">
-                                        <span className="text-gray-500">{timeAgo(tsDate)}</span>
-                                        <span className="text-gray-400">•</span>
-                                        <span className="text-gray-400">
-                                          {tsDate ? tsDate.toLocaleString() : "Unknown"}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </div>
-{/* ========Trail end======== */}
-                        
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
+            <h1 className="text-xl font-black tracking-tight flex items-center gap-2">
+              <ShieldCheck className="w-6 h-6" /> REFCENTRAL ELITE
+            </h1>
+            <p className="text-emerald-100 text-xs font-medium">Ref: {currentRefereeName}</p>
           </div>
+          <Button 
+            onClick={() => setShowPlayerReg(true)} 
+            className="bg-white/20 hover:bg-white/30 text-white border-none backdrop-blur-md"
+          >
+            <UserPlus className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Register Player</span>
+          </Button>
         </div>
       </div>
 
-      {/* MODAL: RefereeUnifiedReportCenter */}
-      {showReportCenter && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
-            <RefereeUnifiedReportCenter
-              appointmentId={showReportCenter}
-              onClose={() => setShowReportCenter(null)}
-              onSuccess={async () => {
-                toast({ title: "Report submitted" });
-                setShowReportCenter(null);
-                updateLastActive();
+      <main className="max-w-5xl mx-auto p-4 -mt-4">
 
-                await updateDoc(doc(db, "appointments", showReportCenter), {
-                  auditTrail: arrayUnion({
-                    by: currentRefereeName,
-                    action: "Submitted Match Report",
-                    timestamp: new Date().toISOString(),
-                  }),
-                });
-              }}
-            />
-          </div>
+        {/* STATS */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+            <div className="bg-white p-4 rounded-2xl shadow-sm border-b-4 border-blue-500">
+                <p className="text-gray-500 text-[10px] font-bold uppercase">Matches</p>
+                <p className="text-xl font-black">{appointments.length}</p>
+            </div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border-b-4 border-emerald-500">
+                <p className="text-gray-500 text-[10px] font-bold uppercase">Status</p>
+                <p className="text-xl font-black text-emerald-600 uppercase">Live</p>
+            </div>
+        </div>
+
+        <div className="space-y-6">
+          {appointments.map((apt) => (
+            <Card key={apt.id} className="overflow-hidden border-none shadow-xl rounded-3xl bg-white">
+              <div className="bg-gray-900 p-5 text-white flex justify-between items-center">
+                <div>
+                    <h4 className="text-lg font-black uppercase tracking-tight">
+                        {apt?.homeTeam || "Team A"} <span className="text-emerald-400">vs</span> {apt?.awayTeam || "Team B"}
+                    </h4>
+                    <p className="text-[10px] font-medium text-gray-400">
+                        {apt?.venue} • {apt?.date}
+                    </p>
+                </div>
+                {apt?.finalResult && <div className="text-xl font-black text-emerald-400">{apt.finalResult}</div>}
+              </div>
+
+              <div className="p-6">
+                {!apt?.resultSubmitted ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Step 1: Verify Squads</p>
+                      {['home', 'away'].map((side) => {
+                        const teamName = side === 'home' ? apt?.homeTeam : apt?.awayTeam;
+                        const key = `${apt.id}_${side}`;
+                        const count = selectedMatchPlayers[key]?.length || 0;
+                        return (
+                          <div key={side} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs ${side === 'home' ? 'bg-blue-600' : 'bg-red-600'}`}>
+                                    {teamName?.[0] || "?"}
+                                </div>
+                                <div>
+                                    <p className="font-bold text-sm text-gray-800">{teamName}</p>
+                                    <p className="text-[9px] text-gray-500">{count} Players</p>
+                                </div>
+                            </div>
+                            <Button 
+                                size="sm" 
+                                className="h-8 text-xs bg-emerald-600"
+                                onClick={() => setActiveSelectionTeam({ id: apt.id, side: side as any, teamName })}
+                            >
+                                {count > 0 ? "Edit" : "Select"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                        {/* Step 2: Score */}
+                    <div className={`p-5 rounded-3xl ${canSubmitResult(apt) ? 'bg-emerald-50 border-2 border-emerald-200' : 'bg-gray-50 opacity-40'}`}>
+                        <p className="text-[10px] font-black text-emerald-700 uppercase mb-4">Step 2: Score</p>
+                        <div className="flex items-center gap-4 justify-center mb-4">
+                            <Input 
+                                type="number" className="w-16 h-12 text-center text-xl font-black rounded-xl" 
+                                disabled={!canSubmitResult(apt)}
+                                value={resultForm.appointmentId === apt.id ? resultForm.homeScore : ""}
+                                onChange={(e) => setResultForm({ ...resultForm, appointmentId: apt.id, homeScore: e.target.value })}
+                            />
+                            <div className="font-bold text-emerald-300">VS</div>
+                            <Input 
+                                type="number" className="w-16 h-12 text-center text-xl font-black rounded-xl" 
+                                disabled={!canSubmitResult(apt)}
+                                value={resultForm.appointmentId === apt.id ? resultForm.awayScore : ""}
+                                onChange={(e) => setResultForm({ ...resultForm, appointmentId: apt.id, awayScore: e.target.value })}
+                            />
+                        </div>
+                      <Button 
+                        className="w-full bg-emerald-600 font-bold hover:bg-emerald-700 transition-all"
+                        disabled={!canSubmitResult(apt)}
+                        onClick={() => handleSubmitResult(apt.id)} // Calls the function with the match ID
+                    >
+                        SUBMIT RESULT
+                    </Button>
+                    </div>
+                  </div>
+                ) : (
+                    <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <CheckCircle2 className="text-emerald-600 w-5 h-5" />
+                            <p className="font-bold text-emerald-900 text-xs">Result Recorded</p>
+                        </div>
+                        <Button variant="ghost" size="sm" className="text-emerald-700 font-bold underline text-xs">View Card</Button>
+                    </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      </main>
+
+{/* FIXED BOTTOM NAVIGATION */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 z-[100] flex justify-between items-center shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
+        <div className="flex flex-col items-center gap-1 text-emerald-600">
+          <Calendar className="w-5 h-5" />
+          <span className="text-[10px] font-bold uppercase">Matches</span>
+        </div>
+        
+        <button 
+          onClick={() => setShowPlayerReg(true)}
+          className="bg-emerald-600 text-white p-4 rounded-2xl -mt-10 shadow-lg shadow-emerald-200 border-4 border-[#f8fafc]"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+
+        <button 
+          onClick={handleLogout}
+          className="flex flex-col items-center gap-1 text-red-500 hover:text-red-700 transition-colors"
+        >
+          <LogOut className="w-5 h-5" />
+          <span className="text-[10px] font-bold uppercase">Logout</span>
+        </button>
+      </div>
+
+      {/* MATCH PLAYER SELECTION */}
+      {activeSelectionTeam && (
+        <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex items-end justify-center">
+            <div className="bg-white w-full max-w-lg h-[80vh] rounded-t-[2.5rem] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300">
+                <div className="p-6 bg-gray-900 text-white flex justify-between items-center">
+                    <h3 className="font-black uppercase">{activeSelectionTeam.teamName}</h3>
+                    <Button variant="ghost" className="text-white" onClick={() => setActiveSelectionTeam(null)}><X /></Button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-2">
+                    {teamDatabase.filter(p => p.teamName === activeSelectionTeam.teamName).map(player => {
+                        const key = `${activeSelectionTeam.id}_${activeSelectionTeam.side}`;
+                        const isSelected = selectedMatchPlayers[key]?.some(p => p.id === player.id);
+                        return (
+                            <div 
+                                key={player.id} 
+                                onClick={() => handlePlayerToggle(key, player)}
+                                className={`p-3 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between ${isSelected ? 'bg-emerald-50 border-emerald-500' : 'bg-gray-50 border-transparent'}`}
+                            >
+                                <span className="font-bold text-sm">{player.firstName} {player.lastName}</span>
+                                <CheckCircle2 className={`w-5 h-5 ${isSelected ? 'text-emerald-600' : 'text-gray-200'}`} />
+                            </div>
+                        )
+                    })}
+                </div>
+                <div className="p-6">
+                    <Button className="w-full bg-emerald-600 h-12 rounded-xl font-bold" onClick={() => setActiveSelectionTeam(null)}>Confirm Selection</Button>
+                </div>
+            </div>
         </div>
       )}
 
-      <LawsOfTheGameWidget />
-    </>
+      {/* PLAYER REG MODAL */}
+      {showPlayerReg && (
+        <div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4">
+            <PlayerRegistrationModal onClose={() => setShowPlayerReg(false)} />
+        </div>
+      )}
+    </div>
   );
 };

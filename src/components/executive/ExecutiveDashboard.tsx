@@ -55,6 +55,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CoachingReportUnified } from "../coach/CoachingReportUnified";
+import { MatchCardsView } from "./MatchCardsView";
 
 const formatTimestamp = (ts: any): Date => {
   if (!ts) return new Date();
@@ -95,7 +96,7 @@ export const ExecutiveDashboard: React.FC = () => {
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
   const [activeTab, setActiveTab] = useState<
-    "overview" | "appointments" | "all-appointments" | "results" | "reports" | "coaches" | "referees" | "teams"
+    "overview" | "appointments" | "all-appointments" | "results" | "reports" | "coaches" | "referees" | "teams" | "matchcards"
   >("overview");
 
   const [showRefForm, setShowRefForm] = useState(false);
@@ -275,11 +276,13 @@ export const ExecutiveDashboard: React.FC = () => {
       const matchVenue = !filterVenue || apt.venue === filterVenue;
       const matchDate = !filterDate || apt.date === filterDate;
       return matchSearch && matchRef && matchVenue && matchDate;
+
     });
   }, [appointments, searchTerm, filterReferee, filterVenue, filterDate]);
 
   const uniqueReferees = Array.from(new Set(appointments.map((a) => a.referee || a.ar).filter(Boolean)));
   const uniqueVenues = Array.from(new Set(appointments.map((a) => a.venue)));
+  
 
   const handleLogout = async () => {
     const auth = getAuth();
@@ -530,6 +533,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 <TabsTrigger value="reports">Reports</TabsTrigger>
                 <TabsTrigger value="coaches">Coaches</TabsTrigger>
                 <TabsTrigger value="referees">Referees</TabsTrigger>
+                <TabsTrigger value="matchcards">Match Cards</TabsTrigger>
                 <TabsTrigger value="teams">Teams</TabsTrigger>
               </TabsList>
 
@@ -759,6 +763,7 @@ export const ExecutiveDashboard: React.FC = () => {
               <TabsContent value="coaches"><CoachManagement /></TabsContent>
               <TabsContent value="referees"><RefereeManagement /></TabsContent>
               <TabsContent value="teams"><TeamRegistrationForm /></TabsContent>
+              <TabsContent value="matchcards"><MatchCardsView /></TabsContent>
             </Tabs>
           </div>
 
@@ -773,6 +778,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 { value: "reports", label: "Reports" },
                 { value: "coaches", label: "Coaches" },
                 { value: "referees", label: "Referees" },
+                { value: "matchcards", label: "Match Cards" },
                 { value: "teams", label: "Teams" },
               ].map((tab) => (
                 <button
@@ -919,6 +925,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 {activeTab === "reports" && <ReportsTab />}
                 {activeTab === "coaches" && <CoachManagement />}
                 {activeTab === "referees" && <RefereeManagement />}
+                {activeTab === "matchcards" && <MatchCardsView />}
                 {activeTab === "teams" && <TeamRegistrationForm />}
               </div>
             )}

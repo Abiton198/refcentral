@@ -1,248 +1,114 @@
-# **RefCentral**  
-*ZA Referee & Coaching Management System*  
-[https://refcentral.netlify.app](https://refcentral.netlify.app)  
 
----
+
+# **RefCentral** *EPRRS Referee & Coaching Management System* [https://refcentral.netlify.app](https://refcentral.netlify.app)
+
 
 ## Project Summary
 
-**RefCentral** is a **real-time, role-based web platform** designed to streamline **match administration, referee assignments, performance reporting, and audit accountability** for sports organizations in South Africa.
+**RefCentral** is a **real-time, role-based web platform** designed to streamline **match administration, player registration, referee assignments, and audit accountability** for Eastern Province Rugby Union Referees society in South Africa.
 
-Built for **executives, referees, and coaches**, it replaces paper-based workflows with a **secure, mobile-friendly digital system** that ensures:
-- Transparent appointments
-- Timely match reports
-- Full audit trails
-- Real-time updates
-
-> **Live Demo:** [https://refcentral.netlify.app](https://refcentral.netlify.app)  
-> **Status:** Production-Ready | Actively Maintained
+Built for **executives, referees, and coaches**, it replaces paper-based workflows with a **secure, mobile-friendly digital system**.
 
 ---
 
 ## Core Features
 
 | Feature | Description |
-|-------|-----------|
-| **Executive Dashboard** | Full control: appoint officials, view stats, mark reports as reviewed |
-| **Referee Reporting** | Submit match reports with real-time sync |
-| **Coaching Reports** | Unified form to assess referee performance |
-| **Audit Trail** | Every action logged with user + timestamp |
-| **Real-Time Sync** | Firebase-powered live updates across devices |
-| **Mobile-First UI** | Fully responsive on phones, tablets, desktops |
-| **Role-Based Access** | Executive, Referee, Coach (via Firebase Auth) |
+| --- | --- |
+| **Executive Dashboard** | Full control: appoint officials, view stats, mark reports as reviewed. |
+| **Player Registration** | Referees can register players with **Unique Per-Team IDs** (e.g., KWA10001). |
+| **Live Duplicate Check** | Real-time "as-you-type" detection to prevent dual registrations across clubs. |
+| **Referee Reporting** | Submit match reports with real-time sync. |
+| **Audit Trail** | Every player registration and report logged with Ref name + timestamp. |
+| **Mobile-First UI** | Fully responsive on phones for on-field administration. |
 
 ---
 
-## Tech Stack
-
-```text
-Frontend:     React 18 + TypeScript + Vite
-UI:           Tailwind CSS + ShadCN UI
-Backend:      Firebase Firestore (NoSQL)
-Auth:         Firebase Authentication
-Hosting:      Netlify (CI/CD from GitHub)
-Icons:        Lucide React
-Date:         date-fns
-```
-
----
-
-## Firestore Data Model
+## Firestore Data Model (Updated)
 
 ```ts
-appointments/
-  └─ {matchId}
-     ├── homeTeam, awayTeam
-     ├── date, time, venue
-     ├── referee, ar, coachName
-     ├── status: "pending"|"accepted"|"rejected"
-     ├── reportSubmitted: boolean
-     ├── reportReviewed: boolean
-     ├── reportReviewedBy: "John Doe"
-     └── auditTrail: [{ action, by, at }]
+teams/
+  └─ {teamId}
+     ├── name: "Motherwell"
+     ├── league: "Grand Challenge"
+     └── homeGround: "NU 1 Stadium"
 
+players/           → Player Database
+  └─ {playerId}
+     ├── firstName, lastName
+     ├── dob: string | null (Optional)
+     ├── position: "Fly-half (10)" | etc.
+     ├── teamId: "031gAD..." 
+     ├── teamName: "Motherwell"
+     ├── displayId: "MOT10001" // Unique Per-Team ID
+     ├── regNumber: 10001      // Incrementing integer
+     ├── registeredBy: "John Doe" (Ref Name)
+     ├── refereeUid: "auth_uid"
+     └── registrationTime: "Jan 1, 2026, 4:58 PM"
+
+appointments/      → Match assignments & Review flow
 reports/           → Referee match reports
-coachReports/      → Coaching feedback
-results/           → Final scores
+
 ```
 
 ---
 
-## Key Innovation: Report Review Flow
+## Key Innovation: Unique Per-Team Registration
 
-```mermaid
-graph LR
-  A[Referee Submits Report] --> B[Firestore: reports]
-  B --> C[Auto-update appointment]
-  C --> D[Show "Report" Badge]
-  D --> E[Executive Clicks "Mark Reviewed"]
-  E --> F[Update: reportReviewed = true]
-  F --> G[Audit: "Reviewed by John"]
-  G --> H[Badge: "Reviewed by John"]
-```
+To maintain league integrity, the system uses a custom ID generation logic:
 
-> **No `serverTimestamp()` in `arrayUnion()`** – fixed with ISO string
+1. **Prefix:** Takes first 3 letters of Team Name (e.g., **KWA**ru).
+2. **Incremental:** Queries Firestore for the highest `regNumber` within that specific `teamId`.
+3. **Start Point:** Defaults to `10001` for new teams.
+4. **Live Prevention:** As a referee types a player's name, the system queries the entire database. If a match is found, it displays a warning showing the player's current club and position, blocking the new registration.
 
 ---
 
-## How to Use (Demo)
+## Updated Security Rules (Firestore)
 
-| Role | Email | Password |
-|------|-------|----------|
-| **Executive** | `exec@zaref.co.za` | `password123` |
-| **Referee**   | `ref1@zaref.co.za` | `ref123` |
-| **Coach**     | `coach@zaref.co.za` | `coach123` |
-
-### Try This:
-1. Login as **Executive**
-2. Appoint a referee
-3. Switch to **Referee** → submit report
-4. Back to **Executive** → click *"Mark Reviewed"*
-5. See **audit trail** and **reviewer name**
-
----
-
-## Project Structure
-
-```
-src/
-├── pages/
-│   └── executive/ExecutiveDashboard.tsx
-├── components/
-│   ├── ui/ (ShadCN)
-│   └── executive/CoachAppointmentForm.tsx
-├── lib/firebase.ts
-├── data/mockData.ts
-└── App.tsx
-```
-
----
-
-## Setup & Local Development
-
-```bash
-# 1. Clone
-git clone https://github.com/yourorg/refcentral.git
-cd refcentral
-
-# 2. Install
-npm install
-
-# 3. Add Firebase Config
-cp .env.example .env
-# → Fill in your Firebase project keys
-
-# 4. Run
-npm run dev
-```
-
-> Open [http://localhost:5173](http://localhost:5173)
-
----
-
-## Firebase Setup
-
-1. Go to [Firebase Console](https://console.firebase.google.com)
-2. Create project → Enable **Auth** + **Firestore**
-3. Add web app → copy config
-4. Paste into `.env`
-
-```env
-VITE_FIREBASE_API_KEY=xxx
-VITE_FIREBASE_AUTH_DOMAIN=xxx.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=xxx
-```
-
----
-
-## Security Rules (Firestore)
+Referees are permitted to register and read player data but are strictly prohibited from deleting records to maintain the audit trail.
 
 ```js
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=쁩} {
-      allow read: if true;
-      allow write: if request.auth != null;
-    }
-  }
+match /players/{playerId} {
+  // Referees can check for duplicates and list players for matchcards
+  allow read: if request.auth != null;
+  
+  // Referees can register players but cannot delete them
+  allow create: if request.auth != null;
+  
+  // Only Executives can modify/delete player records
+  allow update, delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'executive';
 }
+
 ```
-
----
-
-## Deployment
-
-### Netlify (Live)
-- Connected to GitHub
-- Auto-deploy on `main`
-- URL: [https://refcentral.netlify.app](https://refcentral.netlify.app)
-
-```bash
-npm run build
-```
-
----
-
-## How to Get Involved
-
-We welcome **contributors**, **testers**, and **sports admins**!
-
-### Ways to Contribute
-
-| Role | How |
-|------|-----|
-| **Developer** | Fix bugs, add PDF export, dark mode |
-| **Tester** | Report UX issues, test on mobile |
-| **Sports Admin** | Suggest features (ratings, payments, etc.) |
-
-### Steps:
-1. **Fork** the repo
-2. Create branch: `git checkout -b feature/pdf-viewer`
-3. Commit & push
-4. Open **Pull Request**
 
 ---
 
 ## Roadmap
 
 | Status | Feature |
-|--------|--------|
+| --- | --- |
 | Done | Report Review + Audit Trail |
-| Done | Mobile Responsive |
-| In Progress | View Report PDF |
-| Planned | Export Reviewed List (CSV) |
-| Planned | Email Notifications |
-| Planned | Referee Performance Dashboard |
-
----
-
-## License
-
-```
-MIT License
-```
-
-Free to use, modify, and distribute.
+| Done | **Unique Team-Based Player ID Generation** |
+| Done | **Live Duplicate Registration Prevention** |
+| In Progress | **Match Day Checklist (Selecting players from registered list)** |
+| Planned | Export Team Lists to PDF |
+| Planned | Player Transfer Request System |
 
 ---
 
 ## Contact
 
 | Role | Name | Email |
-|------|------|-------|
+| --- | --- | --- |
 | Lead Developer | Dev Team | abitonp@gmail.com |
 | Support | Help Desk | abitonpadera@gmail.com |
 
 ---
 
-## Live Demo
+**RefCentral – Accountability. Transparency. Speed.**
 
-[https://refcentral.netlify.app](https://refcentral.netlify.app)
+*Built for South African sports. Powered by Firebase & React.* *Version: 2.2.0 | Updated: January 01, 2026*
 
 ---
 
-**RefCentral – Accountability. Transparency. Speed.**
-
-*Built for South African sports. Powered by Firebase & React.*  
-*Version: 2.1.0 | Updated: November 09, 2025*

@@ -1,337 +1,199 @@
-// src/components/ResultsView.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Button } from "../ui/Button";
 import { db } from "../../lib/firebase";
 import {
   collection,
   onSnapshot,
   orderBy,
   query,
-  doc,
-  getDoc,
+  where,
 } from "firebase/firestore";
 import { getWeek } from "date-fns";
+import { 
+  User, MapPin, Calendar, Clock, Info, 
+  ChevronDown, Search, Trophy, Shield 
+} from "lucide-react";
 
-/** ───────────────────────────────────────────────
- * Helper functions
- * ─────────────────────────────────────────────── */
-const isSameDay = (d1: Date, d2: Date) =>
-  d1.toDateString() === d2.toDateString();
-
+/** Helper: Date Checkers **/
+const isSameDay = (d1: Date, d2: Date) => d1.toDateString() === d2.toDateString();
 const isYesterday = (d: Date, now: Date) => {
-  const diff = now.getTime() - d.getTime();
-  return diff > 0 && diff < 1000 * 60 * 60 * 24 * 2 && d.getDate() === now.getDate() - 1;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  return isSameDay(d, yesterday);
 };
 
-/** ───────────────────────────────────────────────
- * Type definition
- * ─────────────────────────────────────────────── */
 interface MatchResult {
   id: string;
   homeTeam: string;
   awayTeam: string;
   homeScore: string;
   awayScore: string;
-  referee: string;
+  refereeName?: string;
   venue: string;
   submittedAt: Date;
   notes?: string;
-  resultSummary?: string;
-  playerOfMatch?: string;
-  appointmentId?: string;
+  homeSquad?: any[];
+  awaySquad?: any[];
 }
 
-/** ───────────────────────────────────────────────
- * ResultsView Component
- * ─────────────────────────────────────────────── */
 export const ResultsView: React.FC = () => {
   const [results, setResults] = useState<MatchResult[]>([]);
-  const [appointments, setAppointments] = useState<Record<string, any>>({});
-  const [refereeMap, setRefereeMap] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedRefFilter, setSelectedRefFilter] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
-  /** Build referee map */
   useEffect(() => {
-    const qRefs = query(collection(db, "referees"));
-    const unsubRefs = onSnapshot(qRefs, (snapshot) => {
-      const map: Record<string, string> = {};
-      snapshot.forEach((docSnap) => {
-        const d = docSnap.data() as any;
-        const name = `${d.firstName || ""} ${d.surname || ""}`.trim();
-        const displayName =
-          name || d.displayName || d.email || docSnap.id || "Unknown Referee";
-        if (d.email) map[d.email] = displayName;
-        map[docSnap.id] = displayName;
-      });
-      setRefereeMap(map);
-    });
-    return () => unsubRefs();
-  }, []);
-
-  /** Listen to match_results (FIXED!) */
-  useEffect(() => {
-    const resultsQuery = query(
-      collection(db, "match_results"),
+    // IMPORTANT: This query looks at "appointments" because that's where 
+    // your RefereeDashboard.jsx saves the data.
+    const q = query(
+      collection(db, "appointments"),
+      where("resultSubmitted", "==", true), // Only get matches that are finished
       orderBy("submittedAt", "desc")
     );
 
-    const unsubResults = onSnapshot(resultsQuery, async (snapshot) => {
-      const list: MatchResult[] = [];
-
-      for (const docSnap of snapshot.docs) {
-        const data = docSnap.data() as any;
-
-        // Fetch appointment for team names & venue
-        let apt: any = null;
-        if (data.appointmentId) {
-          if (!appointments[data.appointmentId]) {
-            try {
-              const aptSnap = await getDoc(doc(db, "appointments", data.appointmentId));
-              if (aptSnap.exists()) {
-                apt = aptSnap.data();
-                setAppointments(prev => ({ ...prev, [data.appointmentId]: apt }));
-              }
-            } catch (err) {
-              console.error("Failed to fetch appointment:", err);
-            }
-          } else {
-            apt = appointments[data.appointmentId];
-          }
-        }
-
-        const refName =
-          refereeMap[data.submittedBy] ||
-          refereeMap[data.submittedByName] ||
-          data.submittedByName ||
-          "Unknown Referee";
-
-        const venue = apt?.venue || "Unknown Venue";
-
-        list.push({
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(docSnap => {
+        const data = docSnap.data();
+        return {
           id: docSnap.id,
-          homeTeam: apt?.homeTeam || "TBD",
-          awayTeam: apt?.awayTeam || "TBD",
-          homeScore: String(data.homeScore ?? "0"),
-          awayScore: String(data.awayScore ?? "0"),
-          referee: refName,
-          venue,
+          homeTeam: data.homeTeam || "Home Team",
+          awayTeam: data.awayTeam || "Away Team",
+          homeScore: String(data.homeScore || "0"),
+          awayScore: String(data.awayScore || "0"),
+          refereeName: data.refereeName || "Official",
+          venue: data.venue || "TBD",
           notes: data.notes || "",
+          homeSquad: data.homeSquad || [],
+          awaySquad: data.awaySquad || [],
+          // Convert Firebase Timestamp to JS Date
           submittedAt: data.submittedAt?.toDate?.() || new Date(),
-          appointmentId: data.appointmentId,
-        });
-      }
-
-      // Deduplicate
-      const unique = new Map<string, MatchResult>();
-      for (const r of list) {
-        const key = r.appointmentId || r.id;
-        const existing = unique.get(key);
-        if (!existing || r.submittedAt > existing.submittedAt) {
-          unique.set(key, r);
-        }
-      }
-      setResults(Array.from(unique.values()));
+        };
+      });
+      setResults(list);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      setLoading(false);
     });
 
-    return () => unsubResults();
-  }, [refereeMap, appointments]);
-
-  /** Filter & Sort */
-  const refereeOptions = useMemo(() => {
-    const names = Array.from(new Set(results.map((r) => r.referee)));
-    return names.sort((a, b) => a.localeCompare(b));
-  }, [results]);
+    return () => unsub();
+  }, []);
 
   const filteredResults = useMemo(() => {
-    let filtered = results.filter((r) => {
-      const q = searchTerm.toLowerCase().trim();
-      if (q) {
-        const teamHit =
-          r.homeTeam.toLowerCase().includes(q) ||
-          r.awayTeam.toLowerCase().includes(q);
-        const refHit = r.referee.toLowerCase().includes(q);
-        if (!teamHit && !refHit) return false;
-      }
-      if (selectedRefFilter && r.referee !== selectedRefFilter) return false;
-      if (startDate && r.submittedAt < new Date(`${startDate}T00:00:00`)) return false;
-      if (endDate && r.submittedAt > new Date(`${endDate}T23:59:59`)) return false;
-      return true;
-    });
-
-    filtered.sort((a, b) =>
-      sortOrder === "desc"
-        ? b.submittedAt.getTime() - a.submittedAt.getTime()
-        : a.submittedAt.getTime() - b.submittedAt.getTime()
+    return results.filter(r => 
+      r.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.awayTeam.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.refereeName?.toLowerCase().includes(searchTerm.toLowerCase())
     );
+  }, [results, searchTerm]);
 
-    return filtered;
-  }, [results, searchTerm, selectedRefFilter, startDate, endDate, sortOrder]);
-
-  /** Group results */
   const groupedResults = useMemo(() => {
-    const groups: Record<string, MatchResult[]> = {
-      Today: [],
-      Yesterday: [],
-      "This Week": [],
-      Older: [],
-    };
-
+    const groups: Record<string, MatchResult[]> = { Today: [], Yesterday: [], Older: [] };
     const now = new Date();
-    const currentWeek = getWeek(now);
 
     filteredResults.forEach((res) => {
-      const d = res.submittedAt;
-      const week = getWeek(d);
-
-      if (isSameDay(d, now)) groups["Today"].push(res);
-      else if (isYesterday(d, now)) groups["Yesterday"].push(res);
-      else if (week === currentWeek) groups["This Week"].push(res);
+      if (isSameDay(res.submittedAt, now)) groups["Today"].push(res);
+      else if (isYesterday(res.submittedAt, now)) groups["Yesterday"].push(res);
       else groups["Older"].push(res);
     });
 
     return Object.entries(groups).filter(([_, arr]) => arr.length > 0);
   }, [filteredResults]);
 
-  /** Expand */
-  const toggleExpand = (res: MatchResult) => {
-    setExpandedId(expandedId === res.id ? null : res.id);
-  };
+  if (loading) return <div className="p-10 text-center animate-pulse">Loading Results...</div>;
 
   return (
-    <div className="space-y-6">
-      <h3 className="text-2xl font-bold text-gray-900">Match Results</h3>
-
-      {/* Filter Bar */}
-      <div className="flex flex-col lg:flex-row gap-4 flex-wrap bg-gray-50 border rounded-lg p-4">
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">Search</label>
-          <input
-            type="text"
-            placeholder="Team or ref..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="border rounded-md px-3 py-2 text-sm w-64 focus:ring-emerald-500"
-          />
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">Referee</label>
-          <select
-            value={selectedRefFilter}
-            onChange={(e) => setSelectedRefFilter(e.target.value)}
-            className="border rounded-md px-3 py-2 text-sm w-48 bg-white"
-          >
-            <option value="">All</option>
-            {refereeOptions.map((refName) => (
-              <option key={refName} value={refName}>{refName}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">From</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="border rounded-md px-3 py-2 text-sm w-40"
-          />
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">To</label>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="border rounded-md px-3 py-2 text-sm w-40"
-          />
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">Sort</label>
-          <select
-            value={sortOrder}
-            onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
-            className="border rounded-md px-3 py-2 text-sm w-36 bg-white"
-          >
-            <option value="desc">Latest</option>
-            <option value="asc">Oldest</option>
-          </select>
-        </div>
-
-        <div className="flex items-end">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setSearchTerm("");
-              setSelectedRefFilter("");
-              setStartDate("");
-              setEndDate("");
-              setSortOrder("desc");
-            }}
-          >
-            Clear
-          </Button>
-        </div>
+    <div className="max-w-3xl mx-auto p-4 space-y-6">
+      {/* Search */}
+      <div className="relative group">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
+        <input 
+          className="w-full bg-white border border-gray-100 py-4 pl-12 pr-4 rounded-2xl shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+          placeholder="Search matches, teams or referees..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
       </div>
 
-      {/* Results */}
-      {groupedResults.length === 0 ? (
-        <p className="p-6 text-center text-gray-500 border rounded-lg bg-white">
-          No results found.
-        </p>
+      {filteredResults.length === 0 ? (
+        <div className="bg-white p-12 rounded-3xl text-center border border-dashed border-gray-200">
+          <Trophy className="mx-auto text-gray-200 mb-4" size={48} />
+          <p className="text-gray-500 font-medium">No match results recorded yet.</p>
+        </div>
       ) : (
-        groupedResults.map(([groupName, matches]) => (
-          <div key={groupName} className="border rounded-lg bg-white shadow-sm mb-6">
-            <h4 className="bg-gray-100 px-4 py-2 font-semibold text-gray-800 text-sm uppercase">
-              {groupName}
-            </h4>
-            <div className="divide-y">
-              {matches.map((res) => (
-                <div key={res.id}>
-                  <button
-                    onClick={() => toggleExpand(res)}
-                    className="w-full flex justify-between items-center p-4 hover:bg-gray-50"
-                  >
-                    <span className="text-left font-medium">
-                      {res.homeTeam} <span className="text-emerald-600">vs</span> {res.awayTeam}
-                    </span>
-                    <span className="text-lg font-semibold">
+        groupedResults.map(([group, matches]) => (
+          <div key={group} className="space-y-3">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">{group}</h3>
+            {matches.map((res) => (
+              <div key={res.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-50 overflow-hidden">
+                <button 
+                  onClick={() => setExpandedId(expandedId === res.id ? null : res.id)}
+                  className="w-full p-5 flex items-center justify-between hover:bg-gray-50/50 transition-colors"
+                >
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className="text-right flex-1 font-bold text-sm uppercase">{res.homeTeam}</div>
+                    <div className="bg-emerald-600 text-white px-3 py-1 rounded-lg font-black text-lg shadow-sm">
                       {res.homeScore} - {res.awayScore}
-                    </span>
-                  </button>
+                    </div>
+                    <div className="text-left flex-1 font-bold text-sm uppercase">{res.awayTeam}</div>
+                  </div>
+                  <ChevronDown className={`ml-4 text-gray-300 transition-transform ${expandedId === res.id ? "rotate-180" : ""}`} size={20} />
+                </button>
 
-                  <AnimatePresence>
-                    {expandedId === res.id && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="px-6 pb-4 bg-gray-50"
-                      >
-                        <p className="text-sm"><strong>Referee:</strong> {res.referee}</p>
-                        <p className="text-sm"><strong>Venue:</strong> {res.venue}</p>
-                        {res.notes && <p className="text-sm"><strong>Notes:</strong> {res.notes}</p>}
-                        <p className="text-xs text-gray-500 mt-2">
-                          {res.submittedAt.toLocaleString()}
-                        </p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              ))}
-            </div>
+                <AnimatePresence>
+                  {expandedId === res.id && (
+                    <motion.div 
+                      initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
+                      className="border-t border-gray-50 bg-gray-50/30 overflow-hidden"
+                    >
+                      <div className="p-6 space-y-6">
+                        {/* Meta Data */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <User size={14} className="text-emerald-500" /> <b>Ref:</b> {res.refereeName}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <MapPin size={14} className="text-emerald-500" /> <b>Venue:</b> {res.venue}
+                          </div>
+                        </div>
+
+                        {/* Squad Lists */}
+                        <div className="grid grid-cols-2 gap-6">
+                          <SquadColumn team={res.homeTeam} squad={res.homeSquad} side="home" />
+                          <SquadColumn team={res.awayTeam} squad={res.awaySquad} side="away" />
+                        </div>
+
+                        {res.notes && (
+                          <div className="bg-white p-4 rounded-xl border border-gray-100 text-xs italic text-gray-600">
+                            <Info size={12} className="inline mr-2 text-emerald-500" /> {res.notes}
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
           </div>
         ))
       )}
     </div>
   );
 };
+
+// Internal Component for Squad List
+const SquadColumn = ({ team, squad, side }: any) => (
+  <div className="space-y-2">
+    <p className={`text-[9px] font-black uppercase flex items-center gap-1 ${side === 'home' ? 'text-blue-600' : 'text-red-600'}`}>
+       <Shield size={10} /> {team}
+    </p>
+    <div className="space-y-1">
+      {squad.length > 0 ? squad.map((p: any, i: number) => (
+        <div key={i} className="text-[11px] font-semibold text-gray-700 bg-white p-2 rounded-lg border border-gray-50 flex justify-between">
+          <span>{p.firstName} {p.lastName}</span>
+          <span className="text-gray-300">#{p.jerseyNumber || i+1}</span>
+        </div>
+      )) : <p className="text-[10px] text-gray-400 italic">No squad info</p>}
+    </div>
+  </div>
+);
