@@ -1,26 +1,25 @@
+// vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 
-export default defineConfig(({ mode }) => ({
-  base: "./", // ✅ important for Netlify + PWA paths
-  server: {
-    host: "::",
-    port: 8080,
-  },
+export default defineConfig(() => ({
+  base: "/", // ✅ REQUIRED for Netlify
+
   plugins: [
     react(),
-
-    // ✅ Progressive Web App setup
     VitePWA({
+      scope: "/",                 // ✅
       registerType: "autoUpdate",
+
       includeAssets: [
         "favicon.ico",
         "apple-touch-icon.png",
         "icons/icon-192x192.png",
         "icons/icon-512x512.png",
       ],
+
       manifest: {
         name: "Referee Management App",
         short_name: "RefCentral",
@@ -28,7 +27,8 @@ export default defineConfig(({ mode }) => ({
         theme_color: "#10b981",
         background_color: "#ffffff",
         display: "standalone",
-        start_url: ".",
+        start_url: "/",           // ✅ CRITICAL
+
         icons: [
           {
             src: "icons/icon-192x192.png",
@@ -45,25 +45,6 @@ export default defineConfig(({ mode }) => ({
             sizes: "512x512",
             type: "image/png",
             purpose: "any maskable",
-          },
-        ],
-      },
-      workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
-        runtimeCaching: [
-          {
-            urlPattern: ({ request }) => request.destination === "document",
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "html-cache",
-            },
-          },
-          {
-            urlPattern: ({ request }) => request.destination === "script" || request.destination === "style",
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "static-resources",
-            },
           },
         ],
       },
