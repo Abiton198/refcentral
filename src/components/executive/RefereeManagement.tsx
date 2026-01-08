@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { Card } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { db, auth } from "../../lib/firebase";
@@ -17,7 +16,10 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { formatDistanceToNow, format } from "date-fns";
-import { ChevronUp, ChevronDown, Menu, X, Clock } from "lucide-react";
+import { 
+  ChevronUp, ChevronDown, Menu, X, Clock, 
+  MapPin, Mail, Phone, ShieldCheck, Trash2 
+} from "lucide-react";
 
 interface Referee {
   id: string;
@@ -31,12 +33,7 @@ interface Referee {
   status?: "active" | "pending" | "suspended";
   profileImage?: string;
   suspensionReason?: string;
-  activityTrail?: {
-    action: string;
-    by: string;
-    timestamp: any;
-    reason?: string;
-  }[];
+  activityTrail?: any[];
   createdAt?: any;
   lastActive?: any;
 }
@@ -50,9 +47,9 @@ export const RefereeManagement: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [sortField, setSortField] = useState<"name" | "lastActive">("name");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const currentExec = auth.currentUser?.email || "Unknown Executive";
   const [deleting, setDeleting] = useState<string | null>(null);
+  
+  const currentExec = auth.currentUser?.email || "Unknown Executive";
 
   // 🔹 Real-time listener
   useEffect(() => {
@@ -61,7 +58,7 @@ export const RefereeManagement: React.FC = () => {
         const data = docSnap.data();
         return {
           id: docSnap.id,
-          name: data.name || data.firstName || "",
+          name: data.firstName || data.name || "",
           surname: data.surname || data.lastName || "",
           email: data.email || "",
           contact: data.contact || data.mobileNumber || "",
@@ -69,7 +66,7 @@ export const RefereeManagement: React.FC = () => {
           availabilityStatus: data.availabilityStatus || "unknown",
           approved: data.approved ?? false,
           status: data.status || (data.approved ? "active" : "pending"),
-          profileImage: data.profileImage || data.photoURL || "/default-avatar.png",
+          profileImage: data.profileImage || "/default-avatar.png",
           suspensionReason: data.suspensionReason || "",
           activityTrail: data.activityTrail || [],
           createdAt: data.createdAt,
@@ -100,7 +97,6 @@ export const RefereeManagement: React.FC = () => {
     await updateDoc(doc(db, "referees", id), { approved: true, status: "active" });
     await updateDoc(doc(db, "users", id), { approved: true, role: "referee" });
     await addTrail(id, "Approved");
-    alert("Approved");
   };
 
   const handleSuspend = async (id: string) => {
@@ -109,299 +105,224 @@ export const RefereeManagement: React.FC = () => {
     await updateDoc(doc(db, "referees", id), { status: "suspended", suspensionReason: reason });
     await updateDoc(doc(db, "users", id), { approved: false });
     await addTrail(id, "Suspended", reason);
-    alert("Suspended");
   };
 
   const handleActivate = async (id: string) => {
     await updateDoc(doc(db, "referees", id), { status: "active", suspensionReason: "" });
     await updateDoc(doc(db, "users", id), { approved: true });
     await addTrail(id, "Reactivated");
-    alert("Reactivated");
   };
 
   const handleDeleteReferee = async (ref: Referee) => {
-    if (!window.confirm(`Delete ${ref.name} ${ref.surname || ""}? This is permanent.`)) return;
+    if (!window.confirm(`Delete ${ref.name} ${ref.surname}? This is permanent.`)) return;
     setDeleting(ref.id);
     try {
       const batch = writeBatch(db);
       batch.delete(doc(db, "referees", ref.id));
       batch.delete(doc(db, "users", ref.id));
+      
       const reportsSnap = await getDocs(query(collection(db, "reports"), where("refereeId", "==", ref.id)));
       reportsSnap.forEach((d) => batch.delete(d.ref));
+      
       const apptSnap = await getDocs(query(collection(db, "appointments"), where("refereeId", "==", ref.id)));
       apptSnap.forEach((d) => batch.delete(d.ref));
+      
       await batch.commit();
-      alert("Deleted");
-    } catch {
+    } catch (err) {
       alert("Failed to delete referee.");
     } finally {
       setDeleting(null);
     }
   };
 
-  const toggleRow = (id: string) => {
-    const newSet = new Set(expandedRows);
-    newSet.has(id) ? newSet.delete(id) : newSet.add(id);
-    setExpandedRows(newSet);
-  };
-
-  // 🔹 Filter + Sort
   const filteredReferees = useMemo(() => {
     const term = searchTerm.toLowerCase();
-    const filtered = referees
+    return referees
       .filter((r) => {
         if (activeTab === "pending") return !r.approved;
         if (activeTab === "approved") return r.approved && r.status !== "suspended";
         if (activeTab === "suspended") return r.status === "suspended";
         return true;
       })
-      .filter((r) => `${r.name} ${r.surname || ""} ${r.email} ${r.area || ""}`.toLowerCase().includes(term));
-
-    if (sortField === "name") {
-      filtered.sort((a, b) => {
-        const nameA = `${a.name} ${a.surname || ""}`.trim();
-        const nameB = `${b.name} ${b.surname || ""}`.trim();
-        return sortOrder === "asc" ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
-      });
-    } else if (sortField === "lastActive") {
-      filtered.sort((a, b) => {
+      .filter((r) => `${r.name} ${r.surname} ${r.email} ${r.area}`.toLowerCase().includes(term))
+      .sort((a, b) => {
+        if (sortField === "name") {
+          const nameA = `${a.name} ${a.surname}`.toLowerCase();
+          const nameB = `${b.name} ${b.surname}`.toLowerCase();
+          return sortOrder === "asc" ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+        }
         const aTime = a.lastActive?.toMillis?.() || 0;
         const bTime = b.lastActive?.toMillis?.() || 0;
         return sortOrder === "asc" ? aTime - bTime : bTime - aTime;
       });
-    }
-
-    return filtered;
   }, [referees, activeTab, searchTerm, sortOrder, sortField]);
 
-  const counts = useMemo(
-    () => ({
-      pending: referees.filter((r) => !r.approved).length,
-      approved: referees.filter((r) => r.approved && r.status !== "suspended").length,
-      suspended: referees.filter((r) => r.status === "suspended").length,
-    }),
-    [referees]
-  );
+  const counts = useMemo(() => ({
+    pending: referees.filter(r => !r.approved).length,
+    approved: referees.filter(r => r.approved && r.status !== 'suspended').length,
+    suspended: referees.filter(r => r.status === 'suspended').length
+  }), [referees]);
 
-  // 🕒 format last active
   const formatLastActive = (ts: any) => {
     if (!ts) return "—";
     const date = ts.toDate ? ts.toDate() : new Date(ts);
-    const diff = Date.now() - date.getTime();
-    // if within 12h show relative, else full datetime
-    return diff < 12 * 60 * 60 * 1000
-      ? `${formatDistanceToNow(date, { addSuffix: true })}`
-      : format(date, "dd MMM yyyy HH:mm");
+    return formatDistanceToNow(date, { addSuffix: true });
   };
 
-  const formatDate = (ts: any) => (ts ? format(ts.toDate(), "dd MMM yyyy") : "—");
-
-  if (loading) return <div className="text-center py-10 text-gray-500">Loading...</div>;
+  if (loading) return <div className="text-center py-10 font-bold text-slate-500">Syncing Referees...</div>;
 
   return (
-    <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Referee Management</h2>
-
-        <div className="flex items-center gap-3 w-full sm:w-auto">
+    <div className="max-w-7xl mx-auto py-6 px-4">
+      {/* Header & Search */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Referee Management</h2>
+        <div className="relative w-full md:w-72">
           <input
             type="text"
-            placeholder="Search..."
+            placeholder="Search by name, email or area..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="flex-1 sm:flex-initial border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            className="w-full border-2 border-slate-100 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
           />
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="sm:hidden p-2 rounded-lg bg-gray-100"
-          >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="hidden sm:flex space-x-2 border-b pb-2 mb-6 overflow-x-auto">
-        {(["pending", "approved", "suspended"] as const).map((tab) => (
+      {/* Navigation Tabs */}
+      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-6 overflow-x-auto">
+        {(["approved", "pending", "suspended"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded-t-lg font-medium flex items-center gap-2 ${
-              activeTab === tab ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            className={`flex-1 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all min-w-[100px] ${
+              activeTab === tab ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
             }`}
           >
-            {tab === "pending" ? "Pending" : tab === "approved" ? "Approved" : "Suspended"}
-            <span className={`text-sm font-bold ${activeTab === tab ? "text-white" : "text-emerald-600"}`}>
-              ({counts[tab]})
-            </span>
+            {tab} ({counts[tab]})
           </button>
         ))}
       </div>
 
-      {/* Sort */}
-      <div className="hidden sm:flex justify-end items-center gap-2 mb-4">
-        <Button
-          variant={sortField === "name" ? "default" : "outline"}
-          size="sm"
-          onClick={() => {
-            setSortField("name");
-            setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-          }}
-          className="flex items-center gap-1 text-xs"
+      {/* Sorting Controls (Desktop) */}
+      <div className="hidden sm:flex justify-end gap-2 mb-4">
+        <Button 
+          variant="outline" size="sm" 
+          className="text-[10px] font-bold"
+          onClick={() => { setSortField("name"); setSortOrder(sortOrder === "asc" ? "desc" : "asc"); }}
         >
-          Name{" "}
-          {sortOrder === "asc" && sortField === "name" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          Sort Name {sortField === "name" && (sortOrder === "asc" ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}
         </Button>
-        <Button
-          variant={sortField === "lastActive" ? "default" : "outline"}
-          size="sm"
-          onClick={() => {
-            setSortField("lastActive");
-            setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-          }}
-          className="flex items-center gap-1 text-xs"
+        <Button 
+          variant="outline" size="sm" 
+          className="text-[10px] font-bold"
+          onClick={() => { setSortField("lastActive"); setSortOrder(sortOrder === "asc" ? "desc" : "asc"); }}
         >
-          <Clock className="w-3 h-3" /> Last Active
+          Sort Activity {sortField === "lastActive" && (sortOrder === "asc" ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}
         </Button>
       </div>
 
-      {/* Table */}
-      <div className="hidden sm:block bg-white rounded-lg shadow-sm overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b">
+      {/* MOBILE LIST VIEW */}
+      <div className="block sm:hidden space-y-4">
+        {filteredReferees.map((ref) => (
+          <div key={ref.id} className="bg-white border-2 border-slate-100 rounded-2xl p-4 shadow-sm">
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-3 h-3 rounded-full ${ref.availabilityStatus === 'available' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                <div>
+                  <h3 className="font-bold text-slate-900 uppercase">{ref.name} {ref.surname}</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                    <MapPin size={10} /> {ref.area || "No Area"}
+                  </p>
+                </div>
+              </div>
+              <Badge variant={ref.status === 'active' ? 'success' : ref.status === 'suspended' ? 'danger' : 'warning'}>
+                {ref.status}
+              </Badge>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 mb-4">
+                <a href={`mailto:${ref.email}`} className="flex items-center gap-2 text-[10px] font-bold text-slate-600 bg-slate-50 p-2 rounded-lg">
+                    <Mail size={12} /> Email
+                </a>
+                <a href={`tel:${ref.contact}`} className="flex items-center gap-2 text-[10px] font-bold text-slate-600 bg-slate-50 p-2 rounded-lg">
+                    <Phone size={12} /> Call
+                </a>
+            </div>
+
+            <div className="flex gap-2">
+              <Button size="sm" className="flex-1 rounded-lg text-[10px] font-black" onClick={() => setSelectedRefereeId(ref.id)}>PROFILE</Button>
+              {activeTab === 'pending' && (
+                  <Button variant="success" size="sm" className="flex-1 rounded-lg text-[10px]" onClick={() => handleApprove(ref.id)}>APPROVE</Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* DESKTOP TABLE VIEW */}
+      <div className="hidden sm:block bg-white rounded-2xl border-2 border-slate-100 overflow-hidden shadow-sm">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-slate-50 border-b-2 border-slate-100">
             <tr>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">#</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Referee</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Registered</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase text-right">Actions</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Referee</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Last Active</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Region</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
-            {filteredReferees.map((ref, idx) => {
-              const isExpanded = expandedRows.has(ref.id);
-              const dotColor =
-                ref.availabilityStatus === "available"
-                  ? "bg-green-500"
-                  : ref.availabilityStatus === "unavailable"
-                  ? "bg-red-500"
-                  : "bg-gray-400";
-
-              return (
-                <React.Fragment key={ref.id}>
-                  <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => toggleRow(ref.id)}>
-                    <td className="px-4 py-3 text-sm font-medium">#{idx + 1}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-3 h-3 rounded-full ${dotColor}`} />
-                        <div>
-                          <p className="font-medium">
-                            {ref.name} {ref.surname}
-                          </p>
-                          {ref.lastActive && (
-                            <p className="text-xs text-gray-500 flex items-center gap-1">
-                              <Clock className="w-3 h-3" /> Active {formatLastActive(ref.lastActive)}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{formatDate(ref.createdAt)}</td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        variant={
-                          ref.status === "active" ? "success" : ref.status === "suspended" ? "danger" : "warning"
-                        }
-                      >
-                        {ref.status?.toUpperCase()}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedRefereeId(ref.id);
-                        }}
-                      >
-                        View
-                      </Button>
-                    </td>
-                  </tr>
-
-                  {isExpanded && (
-                    <tr>
-                      <td colSpan={5} className="p-0">
-                        <div className="bg-emerald-50 border-t p-6 space-y-4">
-                          <div className="grid grid-cols-2 gap-6 text-sm">
-                            <div>
-                              <p className="font-medium text-gray-700">Contact</p>
-                              <p>{ref.email}</p>
-                              <p>{ref.contact || "—"}</p>
-                            </div>
-                            <div>
-                              <p className="font-medium text-gray-700">Location</p>
-                              <p>{ref.area || "—"}</p>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {!ref.approved && (
-                              <Button size="sm" variant="success" onClick={() => handleApprove(ref.id)}>
-                                Approve
-                              </Button>
-                            )}
-                            {ref.status === "active" && (
-                              <Button size="sm" variant="danger" onClick={() => handleSuspend(ref.id)}>
-                                Suspend
-                              </Button>
-                            )}
-                            {ref.status === "suspended" && (
-                              <Button size="sm" onClick={() => handleActivate(ref.id)}>
-                                Activate
-                              </Button>
-                            )}
-                            <Button size="sm" variant="outline" onClick={() => setSelectedRefereeId(ref.id)}>
-                              Full Profile
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="text-red-600 border-red-600"
-                              onClick={() => handleDeleteReferee(ref)}
-                              disabled={deleting === ref.id}
-                            >
-                              {deleting === ref.id ? "..." : "Delete"}
-                            </Button>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
+          <tbody className="divide-y-2 divide-slate-50">
+            {filteredReferees.map((ref) => (
+              <tr key={ref.id} className="hover:bg-slate-50/50 transition-colors">
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                     <div className={`w-2 h-2 rounded-full ${ref.availabilityStatus === 'available' ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                     <div>
+                        <p className="font-bold text-slate-900 uppercase text-sm">{ref.name} {ref.surname}</p>
+                        <p className="text-[10px] font-medium text-slate-400 italic">{ref.email}</p>
+                     </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-xs font-medium text-slate-500">
+                  {formatLastActive(ref.lastActive)}
+                </td>
+                <td className="px-6 py-4 text-xs font-bold text-slate-600 uppercase">
+                  {ref.area || "—"}
+                </td>
+                <td className="px-6 py-4 text-right space-x-2">
+                  <Button size="sm" variant="ghost" className="text-[10px] font-black" onClick={() => setSelectedRefereeId(ref.id)}>VIEW</Button>
+                  
+                  {ref.status === 'active' && (
+                    <Button size="sm" variant="danger" className="h-8 w-8 p-0 rounded-lg" onClick={() => handleSuspend(ref.id)}><X size={14}/></Button>
                   )}
-                </React.Fragment>
-              );
-            })}
+                  
+                  {ref.status === 'suspended' && (
+                    <Button size="sm" className="h-8 w-8 p-0 rounded-lg bg-emerald-600 text-white" onClick={() => handleActivate(ref.id)}><ShieldCheck size={14}/></Button>
+                  )}
+
+                  {!ref.approved && (
+                    <Button size="sm" variant="success" className="h-8 w-8 p-0 rounded-lg" onClick={() => handleApprove(ref.id)}><ShieldCheck size={14}/></Button>
+                  )}
+
+                  <Button 
+                    size="sm" variant="outline" 
+                    className="h-8 w-8 p-0 rounded-lg text-red-500 border-red-100 hover:bg-red-50" 
+                    onClick={() => handleDeleteReferee(ref)}
+                    disabled={deleting === ref.id}
+                  >
+                    <Trash2 size={14}/>
+                  </Button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {/* Profile Modal */}
+      {/* Modal Profile View */}
       {selectedRefereeId && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={() => setSelectedRefereeId(null)}
-        >
-          <div
-            className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setSelectedRefereeId(null)}>
+          <div className="bg-white rounded-[2rem] p-4 md:p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setSelectedRefereeId(null)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={20}/></button>
             <RefereeProfiles currentRefereeId={selectedRefereeId} />
-            <div className="flex justify-end mt-6">
-              <Button variant="outline" onClick={() => setSelectedRefereeId(null)}>
-                Close
-              </Button>
-            </div>
           </div>
         </div>
       )}

@@ -47,29 +47,55 @@ export const MatchCardsView: React.FC = () => {
   }, []);
 
   // 3. Process Stats
-  const { refereeStats, totalMatches, activeRefs } = useMemo(() => {
-    const start = startOfMonth(parseISO(selectedMonth + "-01"));
-    const end = endOfMonth(start);
-    const grouped: Record<string, any> = {};
-    let matchCount = 0;
+const { refereeStats, totalMatches, activeRefs } = useMemo(() => {
+  // Use the selectedMonth if valid, otherwise fallback to the current month
+  const safeMonth = (selectedMonth && selectedMonth.length >= 7)
+    ? selectedMonth
+    : format(new Date(), "yyyy-MM");
 
-    appointments.forEach(apt => {
-      const matchDate = apt.submittedAt?.toDate() || new Date();
-      if (isWithinInterval(matchDate, { start, end })) {
-        matchCount++;
-        // Use mapping or fallback to display name, finally email
-        const name = refereeNames[apt.refereeEmail] || apt.refereeName || apt.submittedByName || apt.refereeEmail;
-        
-        if (!grouped[name]) {
-          grouped[name] = { matches: [], refCount: 0, arCount: 0 };
-        }
-        grouped[name].matches.push(apt);
-        apt.role === "Referee" ? grouped[name].refCount++ : grouped[name].arCount++;
+  // Create a valid start and end date for the interval check
+  const start = startOfMonth(parseISO(`${safeMonth}-01`));
+  const end = endOfMonth(start);
+
+  const grouped: Record<string, any> = {};
+  let matchCount = 0;
+
+  appointments.forEach((apt) => {
+    // Check if submittedAt is a Firestore Timestamp and convert to JS Date
+    const matchDate = apt.submittedAt?.toDate ? apt.submittedAt.toDate() : null;
+    
+    if (!matchDate) return;
+
+    // Filtering logic based on selected month
+    if (isWithinInterval(matchDate, { start, end })) {
+      matchCount++;
+
+      const name =
+        refereeNames[apt.refereeEmail] ||
+        apt.refereeName ||
+        apt.submittedByName ||
+        apt.refereeEmail ||
+        "Unknown Ref";
+
+      if (!grouped[name]) {
+        grouped[name] = { matches: [], refCount: 0, arCount: 0 };
       }
-    });
-    return { refereeStats: grouped, totalMatches: matchCount, activeRefs: Object.keys(grouped).length };
-  }, [appointments, selectedMonth, refereeNames]);
 
+      grouped[name].matches.push(apt);
+      apt.role === "Referee"
+        ? grouped[name].refCount++
+        : grouped[name].arCount++;
+    }
+  });
+
+  return {
+    refereeStats: grouped,
+    totalMatches: matchCount,
+    activeRefs: Object.keys(grouped).length,
+  };
+}, [appointments, selectedMonth, refereeNames]);
+
+  // 4. Print Handler
   const printSingleRef = (refName: string) => {
     setExpandedRef(refName); // Ensure it's open for printing
     setTimeout(() => window.print(), 500);
@@ -77,16 +103,17 @@ export const MatchCardsView: React.FC = () => {
 
   if (loading) return <div className="p-10 text-center font-bold">Generating Match Cards...</div>;
 
+
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-8 min-h-screen bg-[#F8FAFC]">
-      <style dangerouslySetInnerHTML={{ __html: `
-        @media print {
-          body * { visibility: hidden; }
-          .print-section, .print-section * { visibility: visible; }
-          .print-section { position: absolute; left: 0; top: 0; width: 100%; }
-          .no-print { display: none !important; }
-        }
-      `}} />
+   <style dangerouslySetInnerHTML={{ __html: `
+  @media print {
+    body { background: white; }
+    .no-print { display: none !important; }
+    .print-section { page-break-inside: avoid; }
+  }
+`}} />
+
 
       {/* HEADER */}
       <div className="no-print flex justify-between items-center mb-10 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
@@ -96,12 +123,18 @@ export const MatchCardsView: React.FC = () => {
           </h2>
           <p className="text-slate-500 text-xs font-medium">Click a referee to view details and print reports.</p>
         </div>
-        <input 
-          type="month" 
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold outline-none"
-        />
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val) {
+                setSelectedMonth(val);
+              }
+            }}
+            className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold outline-none"
+          />
+
       </div>
 
       {/* REFEREE CARDS */}
@@ -110,7 +143,7 @@ export const MatchCardsView: React.FC = () => {
           <div key={refName} className={`print-section bg-white rounded-[2rem] border border-slate-200 shadow-sm transition-all ${expandedRef === refName ? 'ring-2 ring-emerald-500' : ''}`}>
             
             {/* COLLAPSIBLE HEADER */}
-            <div className="p-6 flex justify-between items-center">
+        <div className="p-6 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <button 
                 onClick={() => setExpandedRef(expandedRef === refName ? null : refName)}
                 className="flex items-center gap-4 flex-1 text-left"
@@ -151,7 +184,10 @@ export const MatchCardsView: React.FC = () => {
                   <div className="p-6 space-y-6">
                     {data.matches.map((match: any) => (
                       <div key={match.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                        <div className="flex justify-between items-start border-b pb-4 mb-4">
+                       
+                        {/* Match Header */}
+                          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 border-b pb-4 mb-4">
+
                           <div>
                             <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">Match Date: {match.date || format(match.submittedAt?.toDate(), "dd MMM yyyy")}</p>
                             <h4 className="text-lg font-black uppercase">{match.homeTeam} VS {match.awayTeam}</h4>
@@ -165,7 +201,8 @@ export const MatchCardsView: React.FC = () => {
                         </div>
 
                         {/* Squad Details */}
-                        <div className="grid grid-cols-2 gap-8">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+
                           <SquadList title={match.homeTeam} squad={match.homeSquad} color="blue" />
                           <SquadList title={match.awayTeam} squad={match.awaySquad} color="red" />
                         </div>
@@ -194,6 +231,13 @@ export const MatchCardsView: React.FC = () => {
             <p className="text-blue-400 text-[10px] font-black uppercase">Total Games</p>
             <p className="text-3xl font-black">{totalMatches}</p>
           </div>
+
+          {Object.keys(refereeStats).length === 0 && (
+  <div className="text-center text-slate-400 text-sm py-10">
+    No match data for this month
+  </div>
+)}
+
         </div>
       </div>
     </div>
@@ -201,18 +245,29 @@ export const MatchCardsView: React.FC = () => {
 };
 
 // Helper components
-const SquadList = ({ title, squad, color }: any) => (
-  <div className="space-y-2">
-    <p className={`text-[10px] font-black uppercase text-${color}-600 flex items-center gap-1`}>
-      <Shield size={10} /> {title}
-    </p>
-    <div className="grid grid-cols-1 gap-1">
-      {squad?.map((p: any, i: number) => (
-        <div key={i} className="text-[10px] font-medium text-slate-600 flex justify-between border-b border-slate-50">
-          <span>{p.firstName} {p.lastName}</span>
-          <span className="text-slate-300">#{p.jerseyNumber}</span>
-        </div>
-      ))}
+const SquadList = ({ title, squad, color }: any) => {
+  const colorMap: Record<string, string> = {
+    blue: "text-blue-600",
+    red: "text-red-600",
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className={`text-[10px] font-black uppercase ${colorMap[color]} flex items-center gap-1`}>
+        <Shield size={10} /> {title}
+      </p>
+
+      <div className="grid grid-cols-1 gap-1">
+        {squad?.map((p: any, i: number) => (
+          <div
+            key={i}
+            className="text-[10px] font-medium text-slate-600 flex justify-between border-b border-slate-50"
+          >
+            <span>{p.firstName} {p.lastName}</span>
+            <span className="text-slate-300">#{p.jerseyNumber}</span>
+          </div>
+        ))}
+      </div>
     </div>
-  </div>
-);
+  );
+};

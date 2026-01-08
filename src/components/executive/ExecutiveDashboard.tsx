@@ -919,7 +919,9 @@ export const ExecutiveDashboard: React.FC = () => {
               </div>
             )}
 
-            {["results", "reports", "coaches", "referees", "teams"].includes(activeTab) && (
+    {/* Match Cards View */}
+              {["results", "reports", "coaches", "referees", "teams", "matchcards"].includes(activeTab)
+              && (
               <div className="bg-white rounded-xl p-4 shadow">
                 {activeTab === "results" && <ResultsView />}
                 {activeTab === "reports" && <ReportsTab />}
