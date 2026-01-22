@@ -86,58 +86,45 @@ export const RefereeDashboard: React.FC = () => {
       }
       return { ...prev, [matchKey]: [...current, player] };
     });
-  };
+  }; 
 
   // 3. RESULT SUBMISSION HANDLER
 const handleSubmitResult = async (aptId: string) => {
-  // 1. Validation check
   if (!resultForm.homeScore || !resultForm.awayScore) {
-    toast({
-      variant: "destructive",
-      title: "Missing Scores",
-      description: "Please enter scores for both teams before submitting.",
-    });
+    toast({ variant: "destructive", title: "Missing Scores" });
     return;
   }
 
   try {
-    const aptRef = doc(db, "appointments", aptId);
+    // 1. Create the Result document (Creates if missing, overwrites if exists)
+    const resultRef = doc(db, "match_results", aptId);
     
-    // 2. Prepare the data
-    const finalResult = `${resultForm.homeScore} - ${resultForm.awayScore}`;
-    const homeSquad = selectedMatchPlayers[`${aptId}_home`] || [];
-    const awaySquad = selectedMatchPlayers[`${aptId}_away`] || [];
-
-    // 3. Update Firestore
-    await updateDoc(aptRef, {
-      resultSubmitted: true,
-      finalResult: finalResult,
-      homeScore: resultForm.homeScore,
-      awayScore: resultForm.awayScore,
-      homeSquad: homeSquad,
-      awaySquad: awaySquad,
+    await setDoc(resultRef, {
+      appointmentId: aptId,
+      homeScore: Number(resultForm.homeScore),
+      awayScore: Number(resultForm.awayScore),
+      finalResult: `${resultForm.homeScore} - ${resultForm.awayScore}`,
+      homeSquad: selectedMatchPlayers[`${aptId}_home`] || [],
+      awaySquad: selectedMatchPlayers[`${aptId}_away`] || [],
       submittedAt: serverTimestamp(),
       submittedBy: currentRefereeId
+    }, { merge: true }); // { merge: true } prevents accidental data loss if you add fields later
+
+    // 2. Mark the appointment as done so the UI updates
+    const aptRef = doc(db, "appointments", aptId);
+    await updateDoc(aptRef, {
+      resultSubmitted: true
     });
 
-    // 4. Success feedback
-    toast({
-      title: "Result Submitted!",
-      description: `Final score ${finalResult} has been recorded.`,
-    });
-
-    // 5. Clear the form
+    toast({ title: "Success", description: "Match result created and recorded." });
     setResultForm({ appointmentId: "", homeScore: "", awayScore: "", notes: "" });
 
   } catch (error) {
     console.error("Submission error:", error);
-    toast({
-      variant: "destructive",
-      title: "Error",
-      description: "Failed to save match result. Check your connection.",
-    });
+    toast({ variant: "destructive", title: "Write Failed" });
   }
 };
+
 
 // Logout Handler
   const handleLogout = async () => {
