@@ -19,6 +19,7 @@ import { CoachDashboard } from "./components/coach/CoachDashboard";
 import { auth, db } from "./lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
+import PrivacyPolicy from "./pages/privacy-policy";
 
 // 🔹 Query Client
 const queryClient = new QueryClient();
@@ -101,6 +102,8 @@ const App = () => {
 
               {/* 🔐 Authentication (old version, optional) */}
               <Route path="/auth" element={<Auth />} />
+
+<Route path="/privacy-policy" element={<PrivacyPolicy />} />
 
               {/* 🧾 New Role-based Registration & Login */}
               <Route path="/register" element={<RoleBasedAuth />} />
