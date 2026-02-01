@@ -1,0 +1,4 @@
+#Sun Feb 01 10:03:59 SAST 2026
+base.0=/home/travis/Desktop/refcentral/app/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+renamed.0=classes.dex
+path.0=classes.dex
