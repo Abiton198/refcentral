@@ -1,68 +1,104 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { db } from "../../lib/firebase";
 import { collection, query, onSnapshot, orderBy, doc, getDoc } from "firebase/firestore";
-import { 
-  FileText, Printer, ChevronDown, MapPin, 
-  User, Shield, Search, Trophy, CheckCircle, Download
+import {
+  Trophy,
+  Download,
+  ChevronDown,
+  Shield,
 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { motion, AnimatePresence } from "framer-motion";
-import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval } from "date-fns";
+import {
+  format,
+  parseISO,
+  startOfMonth,
+  endOfMonth,
+  isWithinInterval,
+} from "date-fns";
 import { toast } from "../../hooks/use-toast";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
+interface MatchResult {
+  id: string;
+  homeTeam: string;
+  awayTeam: string;
+  venue: string;
+  refereeName: string;
+  homeScore: number;
+  awayScore: number;
+  homeTries?: number;
+  awayTries?: number;
+  submittedAt: any;
+  appointmentId?: string;
+  homeSquad?: Array<any>;
+  awaySquad?: Array<any>;
+  dateObj: Date;
+}
+
+const LOGO_PATH = "/img/epru_logo.jpeg"; // Adjust path as needed
 
 export const MatchCardsView: React.FC = () => {
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<MatchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
-  const [expandedRef, setExpandedRef] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
-  
-  // Ref to the specific referee section for PDF capture
-  const reportRef = useRef<HTMLDivElement>(null);
+
+  const [expandedMatches, setExpandedMatches] = useState<Record<string, Set<string>>>({});
+
+  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     const q = query(collection(db, "match_results"), orderBy("submittedAt", "desc"));
+
     const unsub = onSnapshot(q, async (snapshot) => {
       const resultsData = await Promise.all(
         snapshot.docs.map(async (docSnap) => {
           const data = docSnap.data();
-          const fallbackRefName = data.homeSquad?.[0]?.refereeName || data.awaySquad?.[0]?.refereeName || "Official";
-          let venue = "TBD", homeTeam = "Home", awayTeam = "Away";
+          const fallbackRefName =
+            data.homeSquad?.[0]?.refereeName ||
+            data.awaySquad?.[0]?.refereeName ||
+            "Official";
+
+          let venue = "TBD",
+            homeTeam = "Home",
+            awayTeam = "Away";
 
           if (data.appointmentId) {
             const aptRef = doc(db, "appointments", data.appointmentId);
             const aptSnap = await getDoc(aptRef);
             if (aptSnap.exists()) {
               const aptData = aptSnap.data();
-              venue = aptData.venue;
-              homeTeam = aptData.homeTeam;
-              awayTeam = aptData.awayTeam;
+              venue = aptData.venue || venue;
+              homeTeam = aptData.homeTeam || homeTeam;
+              awayTeam = aptData.awayTeam || awayTeam;
             }
           }
-          return { 
-            id: docSnap.id, 
-            ...data, 
-            homeTeam, 
-            awayTeam, 
-            venue, 
-            refereeName: data.refereeName || fallbackRefName, 
-            dateObj: data.submittedAt?.toDate() || new Date() 
-          };
+
+          return {
+            id: docSnap.id,
+            ...data,
+            homeTeam,
+            awayTeam,
+            venue,
+            refereeName: data.refereeName || fallbackRefName,
+            dateObj: data.submittedAt?.toDate?.() || new Date(),
+          } as MatchResult;
         })
       );
+
       setResults(resultsData);
       setLoading(false);
     });
+
     return () => unsub();
   }, []);
 
   const { refereeStats, activeRefs } = useMemo(() => {
-    const start = startOfMonth(parseISO(`${selectedMonth || format(new Date(), "yyyy-MM")}-01`));
+    const start = startOfMonth(parseISO(`${selectedMonth}-01`));
     const end = endOfMonth(start);
-    const grouped: Record<string, any> = {};
+    const grouped: Record<string, { matches: MatchResult[]; count: number }> = {};
 
     results.forEach((res) => {
       if (isWithinInterval(res.dateObj, { start, end })) {
@@ -72,166 +108,322 @@ export const MatchCardsView: React.FC = () => {
         grouped[name].count++;
       }
     });
+
     return { refereeStats: grouped, activeRefs: Object.keys(grouped).length };
   }, [results, selectedMonth]);
 
-  // PDF DOWNLOAD LOGIC
+  const toggleMatch = (refName: string, matchId: string) => {
+    setExpandedMatches((prev) => {
+      const currentSet = prev[refName] ? new Set(prev[refName]) : new Set<string>();
+      if (currentSet.has(matchId)) {
+        currentSet.delete(matchId);
+      } else {
+        currentSet.add(matchId);
+      }
+      return { ...prev, [refName]: currentSet };
+    });
+  };
+
   const downloadPDF = async (refName: string) => {
-    if (!reportRef.current) return;
+    const element = sectionRefs.current[refName];
+    if (!element) {
+      toast({ variant: "destructive", title: "Error", description: "Section not found" });
+      return;
+    }
+
     setIsExporting(true);
-    
+
     try {
-      const element = reportRef.current;
+      await new Promise((r) => setTimeout(r, 300));
+
       const canvas = await html2canvas(element, {
-        scale: 2, // Higher quality
+        scale: 2,
         useCORS: true,
         logging: false,
-        backgroundColor: "#ffffff"
+        backgroundColor: "#ffffff",
+        windowWidth: element.scrollWidth,
       });
-      
+
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF("p", "mm", "a4");
-      const imgProps = pdf.getImageProperties(imgData);
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-      
+      const imgProps = pdf.getImageProperties(imgData);
+      let pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      let heightLeft = pdfHeight;
+
       pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      heightLeft -= pdf.internal.pageSize.getHeight();
+
+      while (heightLeft >= 0) {
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, heightLeft - pdfHeight, pdfWidth, pdfHeight);
+        heightLeft -= pdf.internal.pageSize.getHeight();
+      }
+
       pdf.save(`MatchReport_${refName.replace(/\s+/g, "_")}_${selectedMonth}.pdf`);
-      
-      toast({ title: "PDF Generated", description: "Your match report has been downloaded." });
+
+      toast({ title: "Success", description: "PDF downloaded" });
     } catch (error) {
-      console.error("PDF Error:", error);
-      toast({ variant: "destructive", title: "Export Failed", description: "Could not generate PDF." });
+      console.error("PDF generation failed:", error);
+      toast({
+        variant: "destructive",
+        title: "Export Failed",
+        description: "Could not generate the PDF",
+      });
     } finally {
       setIsExporting(false);
     }
   };
 
-  if (loading) return <div className="p-10 text-center font-bold text-slate-400 animate-pulse">Loading Records...</div>;
+  if (loading) {
+    return (
+      <div className="p-10 text-center font-bold text-slate-500 animate-pulse">
+        Loading match records...
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-8 min-h-screen bg-[#F8FAFC]">
-      <style dangerouslySetInnerHTML={{ __html: `
-        @media print {
-          .no-print { display: none !important; }
-          .match-card { border: 2px solid black !important; padding: 30px !important; margin-bottom: 50px !important; border-radius: 0 !important; }
-          .signature-box { display: flex !important; margin-top: 40px; }
-        }
-      `}} />
+    <div className="max-w-6xl mx-auto p-4 md:p-6 lg:p-8 min-h-screen bg-slate-50">
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            @media print {
+              .no-print { display: none !important; }
+              body { background: white !important; margin: 0; }
+              .match-card { 
+                break-inside: avoid; 
+                page-break-inside: avoid;
+                border: 1px solid #000 !important;
+                margin-bottom: 30px !important;
+                padding: 20px !important;
+              }
+              .logo-container { 
+                position: absolute !important;
+                top: 8mm !important;
+                right: 8mm !important;
+                width: 60mm !important;
+                height: auto !important;
+              }
+              .logo-container img {
+                max-width: 100% !important;
+                height: auto !important;
+              }
+              .signature-box { display: flex !important; margin-top: 40px !important; justify-content: space-between !important; }
+            }
+          `,
+        }}
+      />
 
-      {/* HEADER */}
-      <div className="no-print flex flex-col md:flex-row justify-between items-center mb-8 bg-white p-6 rounded-3xl shadow-sm border border-slate-100 gap-4">
+      {/* Screen-only header */}
+      <div className="no-print bg-white rounded-2xl shadow-sm border p-6 mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-            <Trophy className="text-emerald-500" /> OFFICIAL MATCH CARDS
+          <h2 className="text-2xl md:text-3xl font-black text-slate-900 flex items-center gap-3">
+            <Trophy className="text-emerald-600" size={32} /> Official Match Cards
           </h2>
-          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Digital Archive & PDF Export</p>
+          <p className="text-slate-500 text-sm mt-1">Monthly archive & PDF export</p>
         </div>
-        <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-2xl border">
-            <span className="text-[10px] font-black px-2 text-slate-400 uppercase">Period:</span>
-            <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-white border-none rounded-xl px-4 py-1 text-sm font-bold outline-none" />
+
+        <div className="flex items-center gap-3 bg-slate-50 rounded-xl border px-3 py-2">
+          <span className="text-xs font-bold uppercase text-slate-500">Month:</span>
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="bg-transparent border-none text-sm font-medium outline-none"
+          />
         </div>
       </div>
 
-      <div className="space-y-6">
-        {activeRefs === 0 ? (
-            <div className="text-center p-20 bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
-                <p className="text-slate-400 font-bold">No match results found for this period.</p>
-            </div>
-        ) : (
-            Object.entries(refereeStats).map(([refName, data]) => (
-            <div key={refName} className="print-section bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm">
-                
-                {/* REF HEADER */}
-                <div className="p-6 flex flex-col sm:flex-row justify-between items-center gap-4 border-b bg-white relative z-10">
-                <button onClick={() => setExpandedRef(expandedRef === refName ? null : refName)} className="flex items-center gap-4 flex-1">
-                    <div className="w-12 h-12 bg-slate-900 text-white rounded-2xl flex items-center justify-center font-black">{refName[0]}</div>
-                    <div className="text-left">
-                    <h3 className="font-black text-slate-900 uppercase">{refName}</h3>
-                    <p className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 rounded-md inline-block">{data.count} Matches</p>
+      {activeRefs === 0 ? (
+        <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
+          <p className="text-slate-400 font-medium">No match results found for {selectedMonth}</p>
+        </div>
+      ) : (
+        <div className="space-y-10">
+          {Object.entries(refereeStats).map(([refName, { matches }]) => {
+            const expandedForRef = expandedMatches[refName] || new Set<string>();
+
+            return (
+              <div
+                key={refName}
+                ref={(el) => (sectionRefs.current[refName] = el)}
+                className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden print:shadow-none print:border-gray-300 relative"
+              >
+                {/* Logo – only in PDF, top-right */}
+                <div className="logo-container hidden print:block">
+                  <img
+                    src={LOGO_PATH}
+                    alt="EPRU Logo"
+                    className="h-auto w-48 object-contain"
+                    crossOrigin="anonymous"
+                  />
+                </div>
+
+                {/* Referee header */}
+                <div className="px-6 md:px-8 pt-6 pb-4 border-b">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <h3 className="text-2xl md:text-3xl font-black text-slate-900">{refName}</h3>
+                      <p className="text-slate-500 mt-1">
+                        {matches.length} match{matches.length !== 1 ? "es" : ""} • {selectedMonth}
+                      </p>
                     </div>
-                </button>
-                <div className="no-print flex gap-2">
-                    <Button 
-                        onClick={() => downloadPDF(refName)} 
-                        disabled={isExporting || expandedRef !== refName} 
-                        variant="outline" 
-                        size="sm" 
-                        className={`rounded-xl font-bold ${expandedRef !== refName ? 'opacity-50' : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'}`}
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadPDF(refName)}
+                      disabled={isExporting}
+                      className="no-print gap-2"
                     >
-                    {isExporting ? "Processing..." : <><Download size={16} className="mr-2" /> Download PDF</>}
+                      <Download size={16} />
+                      Export PDF
                     </Button>
-                    <Button onClick={() => window.print()} size="sm" className="bg-slate-900 text-white font-bold rounded-xl">
-                    <Printer size={16} className="mr-2" /> Print
-                    </Button>
-                </div>
+                  </div>
                 </div>
 
-                <AnimatePresence>
-                {expandedRef === refName && (
-                    <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="bg-slate-50/30">
-                    <div ref={reportRef} className="p-6 space-y-10 bg-white">
-                        {data.matches.map((match: any) => (
-                        <div key={match.id} className="match-card bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm mb-10">
-                            <div className="flex justify-between items-start border-b-2 border-slate-100 pb-6 mb-6">
-                            <div>
-                                <h4 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900">{match.homeTeam} VS {match.awayTeam}</h4>
-                                <div className="flex items-center gap-4 mt-2">
-                                    <p className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded uppercase">Official Record</p>
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight"> {match.venue} • {format(match.dateObj, "dd MMMM yyyy")}</p>
-                                </div>
-                            </div>
-                            <div className="bg-slate-900 text-white px-6 py-2 rounded-xl text-3xl font-black">{match.homeScore} : {match.awayScore}</div>
-                            </div>
+                {/* Matches */}
+                <div className="p-6 md:p-8 space-y-6">
+                  {matches.map((match) => {
+                    const isExpanded = expandedForRef.has(match.id);
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                            <SquadTable title={match.homeTeam} squad={match.homeSquad} color="blue" />
-                            <SquadTable title={match.awayTeam} squad={match.awaySquad} color="red" />
+                    return (
+                      <div
+                        key={match.id}
+                        className="border border-slate-200 rounded-2xl overflow-hidden bg-white print:border-black print:rounded-none match-card"
+                      >
+                        {/* Summary header – clickable on screen */}
+                        <div
+                          className="flex justify-between items-center px-6 py-4 cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors print:cursor-default print:bg-white print:p-0 print:hover:bg-white"
+                          onClick={() => toggleMatch(refName, match.id)}
+                        >
+                          <div className="flex-1">
+                            <div className="font-bold text-lg">
+                              {match.homeTeam} <span className="text-slate-400 mx-2">vs</span> {match.awayTeam}
                             </div>
+                            <div className="text-sm text-slate-600 mt-1">
+                              {match.venue} • {format(match.dateObj, "dd MMM yyyy")} • {match.homeScore}:{match.awayScore}
+                              {" "}
+                              ({match.homeTries ?? 0}–{match.awayTries ?? 0} tries)
+                            </div>
+                          </div>
 
-                            {/* SIGNATURE SECTION */}
-                            <div className="signature-box flex justify-between mt-12 pt-8 border-t border-slate-200">
-                                <div className="text-left">
-                                    <p className="text-[9px] font-black uppercase text-slate-400 mb-12">Match Official Signature</p>
-                                    <div className="w-48 border-b border-slate-400"></div>
-                                    <p className="text-[9px] font-bold mt-2 uppercase text-slate-600">{refName}</p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-[9px] font-black uppercase text-slate-400 mb-12">Executive Verification</p>
-                                    <div className="w-48 border-b border-slate-400 ml-auto"></div>
-                                    <p className="text-[9px] font-bold mt-2 text-slate-300 uppercase italic">Date: ____ / ____ / 2026</p>
-                                </div>
-                            </div>
+                          <div className="flex items-center gap-3 print:hidden">
+                            <span className="text-sm text-slate-600 font-medium">Details</span>
+                            <ChevronDown
+                              size={20}
+                              className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                            />
+                          </div>
                         </div>
-                        ))}
-                    </div>
-                    </motion.div>
-                )}
-                </AnimatePresence>
-            </div>
-            ))
-        )}
-      </div>
+
+                        <AnimatePresence>
+                          <motion.div
+                            initial={false}
+                            animate={{ height: isExpanded ? "auto" : 0, opacity: isExpanded ? 1 : 0 }}
+                            className="overflow-hidden print:!h-auto print:!opacity-100 print:animate-none"
+                          >
+                            <div className="p-6 pt-4 print:p-8 print:pt-6">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <SquadTable
+                                  title={match.homeSquad?.[0]?.teamName || match.homeTeam || "Home Team"}
+                                  squad={match.homeSquad}
+                                  color="blue"
+                                />
+                                <SquadTable
+                                  title={match.awaySquad?.[0]?.teamName || match.awayTeam || "Away Team"}
+                                  squad={match.awaySquad}
+                                  color="red"
+                                />
+                              </div>
+
+                              <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-6 bg-slate-50 p-5 rounded-xl border print:bg-white print:border-none">
+                                <div>
+                                  <div className="text-xs font-black uppercase text-slate-500">Venue</div>
+                                  <div className="font-medium">{match.venue}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs font-black uppercase text-slate-500">Referee</div>
+                                  <div className="font-medium">{match.refereeName}</div>
+                                </div>
+                                <div className="text-right sm:text-left">
+                                  <div className="text-xs font-black uppercase text-slate-500">Submitted</div>
+                                  <div className="font-medium">{format(match.dateObj, "dd MMM yyyy")}</div>
+                                </div>
+                              </div>
+
+                              {/* Updated signatures section */}
+                              <div className="signature-box flex flex-col sm:flex-row justify-between gap-10 mt-12 pt-8 border-t border-slate-200 print:mt-16 print:pt-12">
+                                <div>
+                                  <div className="text-xs font-black uppercase text-slate-500 mb-3">
+                                    Referee Signature
+                                  </div>
+                                  <div className="w-64 border-b border-slate-400 pb-1"></div>
+                                  <div className="mt-2 text-sm font-medium">{match.refereeName}</div>
+                                </div>
+
+                                <div className="text-right">
+                                  <div className="text-xs font-black uppercase text-slate-500 mb-3">
+                                    Result Received by Executive
+                                  </div>
+                                  <div className="w-64 border-b border-slate-400 pb-1 ml-auto"></div>
+                                  <div className="mt-2 text-sm text-slate-600">
+                                    Date & Time: ____ / ____ / ____  ____:____
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
 
-const SquadTable = ({ title, squad, color }: any) => (
+const SquadTable = ({
+  title,
+  squad,
+  color,
+}: {
+  title: string;
+  squad?: any[];
+  color: "blue" | "red";
+}) => (
   <div className="space-y-4">
-    <div className={`flex items-center gap-2 border-b-2 pb-1 ${color === 'blue' ? 'border-blue-500 text-blue-600' : 'border-red-500 text-red-600'}`}>
-        <Shield size={12} />
-        <p className="text-[11px] font-black uppercase">{title}</p>
+    <div
+      className={`flex items-center gap-2 pb-2 border-b-2 font-semibold ${color === "blue" ? "border-blue-600 text-blue-700" : "border-red-600 text-red-700"
+        }`}
+    >
+      <Shield size={16} />
+      <span className="uppercase text-sm tracking-wide">{title}</span>
     </div>
-    <div className="space-y-1">
-      {squad?.map((p: any, i: number) => (
-        <div key={i} className="flex justify-between text-[10px] bg-slate-50/50 p-2 rounded-lg border border-slate-100/50">
-          <div className="flex flex-col">
-            <span className="font-black uppercase text-slate-700 leading-none">{p.firstName} {p.lastName}</span>
-            <span className="text-[8px] text-slate-400 font-bold uppercase">{p.position || "Player"}</span>
+
+    <div className="space-y-2">
+      {squad?.map((player: any, i: number) => (
+        <div
+          key={i}
+          className="flex justify-between items-center text-sm bg-slate-50/70 p-3 rounded-lg border border-slate-100"
+        >
+          <div>
+            <div className="font-medium">
+              {player.firstName} {player.lastName}
+            </div>
+            <div className="text-xs text-slate-500">{player.position || "Player"}</div>
           </div>
-          <span className="text-slate-300 font-black flex items-center">#{p.regNumber?.toString().slice(-3) || i+1}</span>
+          <div className="text-slate-400 font-mono font-bold">
+            #{player.position?.match(/\d+/)?.[0] || i + 1}
+          </div>
         </div>
-      ))}
+      )) || <div className="text-slate-400 text-sm italic">No squad data</div>}
     </div>
   </div>
 );
