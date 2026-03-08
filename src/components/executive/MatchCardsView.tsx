@@ -134,14 +134,34 @@ export const MatchCardsView: React.FC = () => {
     setIsExporting(true);
 
     try {
-      await new Promise((r) => setTimeout(r, 300));
+      // ────────────────────────────────────────────────
+      // 1. Temporarily expand ALL matches for this referee
+      // ────────────────────────────────────────────────
+      setExpandedMatches((prev) => {
+        const newSets = { ...prev };
+        const allIds = refereeStats[refName]?.matches.map(m => m.id) || [];
+        newSets[refName] = new Set(allIds);
+        return newSets;
+      });
 
+      // Give React time to render + layout the full content
+      await new Promise(resolve => setTimeout(resolve, 600)); // 400–800ms usually enough
+
+      // ────────────────────────────────────────────────
+      // 2. Capture now that everything is expanded
+      // ────────────────────────────────────────────────
       const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,
         logging: false,
         backgroundColor: "#ffffff",
         windowWidth: element.scrollWidth,
+        height: element.scrollHeight,        // ← important
+        width: element.scrollWidth,
+        x: 0,
+        y: 0,
+        scrollX: 0,
+        scrollY: 0,
       });
 
       const imgData = canvas.toDataURL("image/png");
@@ -149,15 +169,18 @@ export const MatchCardsView: React.FC = () => {
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const imgProps = pdf.getImageProperties(imgData);
       let pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-      let heightLeft = pdfHeight;
 
       pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      heightLeft -= pdf.internal.pageSize.getHeight();
 
-      while (heightLeft >= 0) {
+      // Simple multi-page (if very long)
+      let heightLeft = pdfHeight - pdf.internal.pageSize.getHeight();
+      let position = -pdf.internal.pageSize.getHeight();
+
+      while (heightLeft > 0) {
         pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, heightLeft - pdfHeight, pdfWidth, pdfHeight);
+        pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
         heightLeft -= pdf.internal.pageSize.getHeight();
+        position -= pdf.internal.pageSize.getHeight();
       }
 
       pdf.save(`MatchReport_${refName.replace(/\s+/g, "_")}_${selectedMonth}.pdf`);
@@ -168,12 +191,25 @@ export const MatchCardsView: React.FC = () => {
       toast({
         variant: "destructive",
         title: "Export Failed",
-        description: "Could not generate the PDF",
+        description: "Could not generate the PDF – check console",
       });
     } finally {
+      // ────────────────────────────────────────────────
+      // 3. Restore original expanded state (optional – or leave expanded)
+      // ────────────────────────────────────────────────
+      setExpandedMatches((prev) => {
+        const restored = { ...prev };
+        if (restored[refName]) {
+          // restored[refName] = new Set();   ← collapse all again
+          // or keep as-is: delete restored[refName];
+        }
+        return restored;
+      });
+
       setIsExporting(false);
     }
   };
+
 
   if (loading) {
     return (
@@ -198,7 +234,14 @@ export const MatchCardsView: React.FC = () => {
                 margin-bottom: 30px !important;
                 padding: 20px !important;
               }
-              .logo-container { 
+
+              @media print {
+              .overflow-hidden { overflow: visible !important; height: auto !important; }
+              [style*="height: 0px"] { height: auto !important; }
+              .print\\:h-auto { height: auto !important; }
+              .print\\:!opacity-100 { opacity: 1 !important; }
+            }
+                          .logo-container { 
                 position: absolute !important;
                 top: 8mm !important;
                 right: 8mm !important;
@@ -251,7 +294,7 @@ export const MatchCardsView: React.FC = () => {
                 className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden print:shadow-none print:border-gray-300 relative"
               >
                 {/* Logo – only in PDF, top-right */}
-                <div className="logo-container hidden print:block">
+                <div className="logo-container ">
                   <img
                     src={LOGO_PATH}
                     alt="EPRU Logo"
@@ -298,15 +341,11 @@ export const MatchCardsView: React.FC = () => {
                           className="flex justify-between items-center px-6 py-4 cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors print:cursor-default print:bg-white print:p-0 print:hover:bg-white"
                           onClick={() => toggleMatch(refName, match.id)}
                         >
-                          <div className="flex-1">
-                            <div className="font-bold text-lg">
-                              {match.homeTeam} <span className="text-slate-400 mx-2">vs</span> {match.awayTeam}
-                            </div>
-                            <div className="text-sm text-slate-600 mt-1">
-                              {match.venue} • {format(match.dateObj, "dd MMM yyyy")} • {match.homeScore}:{match.awayScore}
-                              {" "}
-                              ({match.homeTries ?? 0}–{match.awayTries ?? 0} tries)
-                            </div>
+                          <div className="text-sm text-slate-600 mt-1 print:text-base print:font-medium">
+                            <span className="font-medium">
+                              {match.homeTeam} {match.homeScore} (  {match.homeTries ?? 0}) : {match.awayTeam} {match.awayScore} ({match.awayTries ?? 0})
+                            </span> •{" "}
+                            {/* {format(match.dateObj, "dd MMM yyyy")} •{" "} */}
                           </div>
 
                           <div className="flex items-center gap-3 print:hidden">
