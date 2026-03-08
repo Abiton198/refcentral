@@ -17,9 +17,10 @@ import {
 } from "firebase/firestore";
 import { formatDistanceToNow, format } from "date-fns";
 import { 
-  ChevronUp, ChevronDown, Menu, X, Clock, 
-  MapPin, Mail, Phone, ShieldCheck, Trash2 
+  ChevronUp, ChevronDown, X, Clock, 
+  MapPin, Mail, Phone, ShieldCheck, Trash2, RefreshCw, Search, Trophy 
 } from "lucide-react";
+import { toast } from "../../hooks/use-toast";
 
 interface Referee {
   id: string;
@@ -28,14 +29,12 @@ interface Referee {
   email: string;
   contact?: string;
   area?: string;
-  availabilityStatus?: "available" | "unavailable" | "unknown";
+  availabilityStatus?: string;
   approved?: boolean;
   status?: "active" | "pending" | "suspended";
-  profileImage?: string;
-  suspensionReason?: string;
-  activityTrail?: any[];
-  createdAt?: any;
+  experienceLevel?: string;
   lastActive?: any;
+
 }
 
 export const RefereeManagement: React.FC = () => {
@@ -46,31 +45,28 @@ export const RefereeManagement: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [sortField, setSortField] = useState<"name" | "lastActive">("name");
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState<string | null>(null);
   
   const currentExec = auth.currentUser?.email || "Unknown Executive";
 
-  // 🔹 Real-time listener
+  // 🔹 Real-time listener with proper data mapping
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "referees"), (snapshot) => {
       const refs = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         return {
           id: docSnap.id,
-          name: data.firstName || data.name || "",
+          // Support both firstName and name fields from your DB
+          name: data.firstName || data.name || "Unknown",
           surname: data.surname || data.lastName || "",
           email: data.email || "",
-          contact: data.contact || data.mobileNumber || "",
-          area: data.area || data.city || "",
-          availabilityStatus: data.availabilityStatus || "unknown",
+          contact: data.mobileNumber || data.contact || "",
+          area: data.city || data.area || "—",
+          availabilityStatus: data.availabilityStatus || "Unavailable",
           approved: data.approved ?? false,
           status: data.status || (data.approved ? "active" : "pending"),
-          profileImage: data.profileImage || "/default-avatar.png",
-          suspensionReason: data.suspensionReason || "",
-          activityTrail: data.activityTrail || [],
-          createdAt: data.createdAt,
-          lastActive: data.lastActive || null,
+          experienceLevel: data.experienceLevel || "Beginner",
+          lastActive: data.updatedAt || null,
         } as Referee;
       });
       setReferees(refs);
@@ -79,62 +75,56 @@ export const RefereeManagement: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // 🔹 Activity trail helper
-  const addTrail = async (id: string, action: string, reason?: string | null) => {
-    await updateDoc(doc(db, "referees", id), {
-      activityTrail: arrayUnion({
-        action,
-        by: currentExec,
-        timestamp: serverTimestamp(),
-        reason: reason || null,
-      }),
-      lastEdited: serverTimestamp(),
-    });
-  };
-
-  // 🔹 Actions
-  const handleApprove = async (id: string) => {
-    await updateDoc(doc(db, "referees", id), { approved: true, status: "active" });
-    await updateDoc(doc(db, "users", id), { approved: true, role: "referee" });
-    await addTrail(id, "Approved");
-  };
-
-  const handleSuspend = async (id: string) => {
-    const reason = prompt("Enter suspension reason:");
-    if (!reason) return;
-    await updateDoc(doc(db, "referees", id), { status: "suspended", suspensionReason: reason });
-    await updateDoc(doc(db, "users", id), { approved: false });
-    await addTrail(id, "Suspended", reason);
-  };
-
-  const handleActivate = async (id: string) => {
-    await updateDoc(doc(db, "referees", id), { status: "active", suspensionReason: "" });
-    await updateDoc(doc(db, "users", id), { approved: true });
-    await addTrail(id, "Reactivated");
-  };
-
-  const handleDeleteReferee = async (ref: Referee) => {
-    if (!window.confirm(`Delete ${ref.name} ${ref.surname}? This is permanent.`)) return;
-    setDeleting(ref.id);
+  // 🔹 Action: Toggle Availability
+  const handleToggleAvailability = async (refId: string, currentStatus?: string) => {
+    const isCurrentlyAvailable = currentStatus?.toLowerCase() === 'available';
+    const newStatus = isCurrentlyAvailable ? 'Unavailable' : 'Available';
+    
     try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, "referees", ref.id));
-      batch.delete(doc(db, "users", ref.id));
-      
-      const reportsSnap = await getDocs(query(collection(db, "reports"), where("refereeId", "==", ref.id)));
-      reportsSnap.forEach((d) => batch.delete(d.ref));
-      
-      const apptSnap = await getDocs(query(collection(db, "appointments"), where("refereeId", "==", ref.id)));
-      apptSnap.forEach((d) => batch.delete(d.ref));
-      
-      await batch.commit();
-    } catch (err) {
-      alert("Failed to delete referee.");
-    } finally {
-      setDeleting(null);
+      await updateDoc(doc(db, "referees", refId), {
+        availabilityStatus: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast({ title: "Status Updated", description: `Marked as ${newStatus}` });
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Update Failed", description: error.message });
     }
   };
 
+  // 🔹 Action: Approval
+  const handleApprove = async (id: string) => {
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "referees", id), { 
+        approved: true, 
+        status: "active",
+        activityTrail: arrayUnion({ action: "Approved", by: currentExec, timestamp: new Date() }) 
+      });
+      batch.update(doc(db, "users", id), { approved: true, role: "referee" });
+      await batch.commit();
+      toast({ title: "Referee Approved", description: "Access granted." });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "Could not approve referee." });
+    }
+  };
+
+  // 🔹 Action: Suspension
+  const handleSuspend = async (id: string) => {
+    const reason = prompt("Enter suspension reason:");
+    if (!reason) return;
+    try {
+      await updateDoc(doc(db, "referees", id), { 
+        status: "suspended", 
+        suspensionReason: reason,
+        activityTrail: arrayUnion({ action: "Suspended", by: currentExec, timestamp: new Date(), reason })
+      });
+      toast({ title: "Referee Suspended" });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "Failed to suspend." });
+    }
+  };
+
+  // 🔹 Filtering Logic
   const filteredReferees = useMemo(() => {
     const term = searchTerm.toLowerCase();
     return referees
@@ -163,165 +153,216 @@ export const RefereeManagement: React.FC = () => {
     suspended: referees.filter(r => r.status === 'suspended').length
   }), [referees]);
 
-  const formatLastActive = (ts: any) => {
-    if (!ts) return "—";
-    const date = ts.toDate ? ts.toDate() : new Date(ts);
-    return formatDistanceToNow(date, { addSuffix: true });
-  };
+ const formatLastActive = (ts: any) => {
+  // 1. Guard against null or undefined
+  if (!ts) return "No recent activity";
 
-  if (loading) return <div className="text-center py-10 font-bold text-slate-500">Syncing Referees...</div>;
+  try {
+    let date: Date;
+
+    // 2. Handle Firestore Timestamp object { seconds, nanoseconds }
+    if (typeof ts.toDate === "function") {
+      date = ts.toDate();
+    } 
+    // 3. Handle cases where it's already a JS Date or an ISO String
+    else if (ts instanceof Date) {
+      date = ts;
+    } 
+    else if (typeof ts === "string" || typeof ts === "number") {
+      date = new Date(ts);
+    }
+    // 4. Handle the "Server Timestamp" pending state (local cache)
+    else {
+      return "Updating...";
+    }
+
+    // Check if the date is valid before formatting
+    if (isNaN(date.getTime())) return "Invalid Date";
+
+    return formatDistanceToNow(date, { addSuffix: true });
+  } catch (error) {
+    console.error("Error formatting date:", error);
+    return "Error";
+  }
+};
+
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+      <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      <p className="font-black text-slate-400 uppercase text-xs tracking-widest">Syncing Officials...</p>
+    </div>
+  );
 
   return (
-    <div className="max-w-7xl mx-auto py-6 px-4">
-      {/* Header & Search */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-        <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Referee Management</h2>
-        <div className="relative w-full md:w-72">
+    <div className="max-w-7xl mx-auto py-8 px-4 bg-[#F8FAFC] min-h-screen">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+            <Trophy className="text-emerald-500" /> REFEREE MANAGEMENT
+          </h2>
+          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest italic">Executive Oversight Panel</p>
+        </div>
+        <div className="relative w-full md:w-96">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input
             type="text"
-            placeholder="Search by name, email or area..."
+            placeholder="Filter by name, region or email..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full border-2 border-slate-100 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+            className="w-full bg-slate-50 border-none rounded-2xl pl-12 pr-4 py-3 text-sm font-bold shadow-inner outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
           />
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl mb-6 overflow-x-auto">
+      {/* Tabs */}
+      <div className="flex space-x-2 bg-slate-200/50 p-1.5 rounded-2xl mb-8 overflow-x-auto">
         {(["approved", "pending", "suspended"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all min-w-[100px] ${
-              activeTab === tab ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            className={`flex-1 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all min-w-[120px] ${
+              activeTab === tab ? "bg-white text-emerald-600 shadow-md" : "text-slate-500 hover:text-slate-800"
             }`}
           >
-            {tab} ({counts[tab]})
+            {tab} <span className="ml-2 bg-slate-100 px-2 py-0.5 rounded-md">{counts[tab]}</span>
           </button>
         ))}
       </div>
 
-      {/* Sorting Controls (Desktop) */}
-      <div className="hidden sm:flex justify-end gap-2 mb-4">
-        <Button 
-          variant="outline" size="sm" 
-          className="text-[10px] font-bold"
-          onClick={() => { setSortField("name"); setSortOrder(sortOrder === "asc" ? "desc" : "asc"); }}
-        >
-          Sort Name {sortField === "name" && (sortOrder === "asc" ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}
-        </Button>
-        <Button 
-          variant="outline" size="sm" 
-          className="text-[10px] font-bold"
-          onClick={() => { setSortField("lastActive"); setSortOrder(sortOrder === "asc" ? "desc" : "asc"); }}
-        >
-          Sort Activity {sortField === "lastActive" && (sortOrder === "asc" ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}
-        </Button>
-      </div>
-
-      {/* MOBILE LIST VIEW */}
-      <div className="block sm:hidden space-y-4">
-        {filteredReferees.map((ref) => (
-          <div key={ref.id} className="bg-white border-2 border-slate-100 rounded-2xl p-4 shadow-sm">
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${ref.availabilityStatus === 'available' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                <div>
-                  <h3 className="font-bold text-slate-900 uppercase">{ref.name} {ref.surname}</h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                    <MapPin size={10} /> {ref.area || "No Area"}
-                  </p>
-                </div>
-              </div>
-              <Badge variant={ref.status === 'active' ? 'success' : ref.status === 'suspended' ? 'danger' : 'warning'}>
-                {ref.status}
-              </Badge>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2 mb-4">
-                <a href={`mailto:${ref.email}`} className="flex items-center gap-2 text-[10px] font-bold text-slate-600 bg-slate-50 p-2 rounded-lg">
-                    <Mail size={12} /> Email
-                </a>
-                <a href={`tel:${ref.contact}`} className="flex items-center gap-2 text-[10px] font-bold text-slate-600 bg-slate-50 p-2 rounded-lg">
-                    <Phone size={12} /> Call
-                </a>
-            </div>
-
-            <div className="flex gap-2">
-              <Button size="sm" className="flex-1 rounded-lg text-[10px] font-black" onClick={() => setSelectedRefereeId(ref.id)}>PROFILE</Button>
-              {activeTab === 'pending' && (
-                  <Button variant="success" size="sm" className="flex-1 rounded-lg text-[10px]" onClick={() => handleApprove(ref.id)}>APPROVE</Button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* DESKTOP TABLE VIEW */}
-      <div className="hidden sm:block bg-white rounded-2xl border-2 border-slate-100 overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-slate-50 border-b-2 border-slate-100">
+      {/* Table Content */}
+      <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
+        <table className="w-full text-left">
+          <thead className="bg-slate-50/50 border-b border-slate-100">
             <tr>
-              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Referee</th>
-              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Last Active</th>
-              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Region</th>
-              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Referee Official</th>
+              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Recent Activity</th>
+              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Region / Level</th>
+              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y-2 divide-slate-50">
-            {filteredReferees.map((ref) => (
-              <tr key={ref.id} className="hover:bg-slate-50/50 transition-colors">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                     <div className={`w-2 h-2 rounded-full ${ref.availabilityStatus === 'available' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                     <div>
-                        <p className="font-bold text-slate-900 uppercase text-sm">{ref.name} {ref.surname}</p>
-                        <p className="text-[10px] font-medium text-slate-400 italic">{ref.email}</p>
-                     </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-xs font-medium text-slate-500">
-                  {formatLastActive(ref.lastActive)}
-                </td>
-                <td className="px-6 py-4 text-xs font-bold text-slate-600 uppercase">
-                  {ref.area || "—"}
-                </td>
-                <td className="px-6 py-4 text-right space-x-2">
-                  <Button size="sm" variant="ghost" className="text-[10px] font-black" onClick={() => setSelectedRefereeId(ref.id)}>VIEW</Button>
-                  
-                  {ref.status === 'active' && (
-                    <Button size="sm" variant="danger" className="h-8 w-8 p-0 rounded-lg" onClick={() => handleSuspend(ref.id)}><X size={14}/></Button>
-                  )}
-                  
-                  {ref.status === 'suspended' && (
-                    <Button size="sm" className="h-8 w-8 p-0 rounded-lg bg-emerald-600 text-white" onClick={() => handleActivate(ref.id)}><ShieldCheck size={14}/></Button>
-                  )}
+          <tbody className="divide-y divide-slate-50">
+            {filteredReferees.map((ref) => {
+              const isAvailable = ref.availabilityStatus?.toLowerCase() === 'available';
+              
+              return (
+                <tr key={ref.id} className="hover:bg-slate-50/30 transition-colors group">
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-4">
+                      <div className="relative flex h-3 w-3">
+                        {isAvailable && (
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        )}
+                        <span className={`relative inline-flex rounded-full h-3 w-3 ${isAvailable ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-400'}`}></span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-black text-slate-900 uppercase text-sm">{ref.name} {ref.surname}</p>
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-md border ${isAvailable ? 'text-emerald-600 border-emerald-100 bg-emerald-50' : 'text-slate-400 border-slate-100 bg-slate-50'}`}>
+                            {ref.availabilityStatus}
+                          </span>
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-400 italic mt-0.5">{ref.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                 <td className="px-8 py-6">
+  <div className="flex flex-col gap-1">
+    <div className="flex items-center gap-2">
+      {/* Icon changes color if they've been active in the last 24 hours */}
+      <Clock 
+        size={14} 
+        className={`${
+          ref.lastActive && (new Date().getTime() - (ref.lastActive.toMillis?.() || 0) < 86400000)
+            ? "text-emerald-500" 
+            : "text-slate-300"
+        }`} 
+      />
+      <span className="text-slate-700 font-black text-[11px] uppercase tracking-tight">
+        {formatLastActive(ref.lastActive)}
+      </span>
+    </div>
+    
+    {/* Secondary small timestamp for precise verification */}
+    {ref.lastActive && (
+      <p className="text-[9px] text-slate-400 font-bold ml-5">
+        {ref.lastActive.toDate 
+          ? format(ref.lastActive.toDate(), "dd MMM, HH:mm") 
+          : "—"}
+      </p>
+    )}
+  </div>
+</td>
+                  <td className="px-8 py-6">
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-black text-slate-600 uppercase flex items-center gap-1">
+                        <MapPin size={10} className="text-emerald-500" /> {ref.area}
+                      </p>
+                      <span className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md uppercase">
+                        {ref.experienceLevel}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-8 py-6 text-right space-x-2">
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      className="text-[10px] font-black h-9 rounded-xl hover:bg-slate-100" 
+                      onClick={() => setSelectedRefereeId(ref.id)}
+                    >
+                      VIEW PROFILE
+                    </Button>
+                    
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="h-9 w-9 p-0 rounded-xl border-slate-200 hover:border-emerald-500 hover:text-emerald-600 transition-all"
+                      onClick={() => handleToggleAvailability(ref.id, ref.availabilityStatus)}
+                    >
+                      <RefreshCw size={14} />
+                    </Button>
 
-                  {!ref.approved && (
-                    <Button size="sm" variant="success" className="h-8 w-8 p-0 rounded-lg" onClick={() => handleApprove(ref.id)}><ShieldCheck size={14}/></Button>
-                  )}
+                    {activeTab === 'pending' && (
+                      <Button 
+                        size="sm" 
+                        variant="success" 
+                        className="h-9 w-9 p-0 rounded-xl" 
+                        onClick={() => handleApprove(ref.id)}
+                      >
+                        <ShieldCheck size={16} />
+                      </Button>
+                    )}
 
-                  <Button 
-                    size="sm" variant="outline" 
-                    className="h-8 w-8 p-0 rounded-lg text-red-500 border-red-100 hover:bg-red-50" 
-                    onClick={() => handleDeleteReferee(ref)}
-                    disabled={deleting === ref.id}
-                  >
-                    <Trash2 size={14}/>
-                  </Button>
-                </td>
-              </tr>
-            ))}
+                    {activeTab === 'approved' && (
+                      <Button 
+                        size="sm" 
+                        variant="danger" 
+                        className="h-9 w-9 p-0 rounded-xl bg-rose-50 text-rose-500 border-rose-100 hover:bg-rose-500 hover:text-white"
+                        onClick={() => handleSuspend(ref.id)}
+                      >
+                        <X size={16} />
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+        {filteredReferees.length === 0 && (
+          <div className="p-20 text-center">
+            <p className="text-slate-400 font-bold uppercase text-xs tracking-widest">No officials found in this category.</p>
+          </div>
+        )}
       </div>
 
-      {/* Modal Profile View */}
+      {/* Profile Modal */}
       {selectedRefereeId && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setSelectedRefereeId(null)}>
-          <div className="bg-white rounded-[2rem] p-4 md:p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setSelectedRefereeId(null)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={20}/></button>
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setSelectedRefereeId(null)}>
+          <div className="bg-white rounded-[3rem] p-4 md:p-8 max-w-5xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setSelectedRefereeId(null)} className="absolute top-8 right-8 p-3 hover:bg-slate-100 rounded-full transition-all text-slate-400">
+              <X size={24}/>
+            </button>
             <RefereeProfiles currentRefereeId={selectedRefereeId} />
           </div>
         </div>
