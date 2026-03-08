@@ -14,7 +14,7 @@ import {
   arrayUnion,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { getAuth, signOut } from "firebase/auth";
 import { AppointmentForm } from "./AppointmentForm";
 import { CoachAppointmentForm } from "@/components/executive/CoachAppointmentForm";
@@ -56,6 +56,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CoachingReportUnified } from "../coach/CoachingReportUnified";
 import { MatchCardsView } from "./MatchCardsView";
+import { StatusBadge } from "./StatusBadge";
 
 const formatTimestamp = (ts: any): Date => {
   if (!ts) return new Date();
@@ -75,6 +76,7 @@ interface Appointment {
   gameType?: string;
   isSchoolGame?: boolean;
   referee?: string;
+  refereeId?: string;
   ar?: string;
   coachId?: string;
   coachName?: string;
@@ -86,6 +88,7 @@ interface Appointment {
   reportReviewed?: boolean;
   reportReviewedBy?: string;
   reportReviewedAt?: any;
+  responses?: Record<string, "accepted" | "rejected" | "pending">;
 }
 
 export const ExecutiveDashboard: React.FC = () => {
@@ -183,14 +186,14 @@ export const ExecutiveDashboard: React.FC = () => {
             setAppointments(prev => prev.map(apt =>
               apt.id === matchId
                 ? {
-                    ...apt,
-                    reportSubmitted: true,
-                    reportSubmittedBy: refereeName,
-                    auditTrail: [
-                      { action: "Match Report Submitted", by: refereeName, at: now.toDate().toISOString() },
-                      ...(apt.auditTrail || [])
-                    ].slice(0, 50),
-                  }
+                  ...apt,
+                  reportSubmitted: true,
+                  reportSubmittedBy: refereeName,
+                  auditTrail: [
+                    { action: "Match Report Submitted", by: refereeName, at: now.toDate().toISOString() },
+                    ...(apt.auditTrail || [])
+                  ].slice(0, 50),
+                }
                 : apt
             ));
           }
@@ -219,15 +222,15 @@ export const ExecutiveDashboard: React.FC = () => {
       setAppointments(prev => prev.map(apt =>
         apt.id === matchId
           ? {
-              ...apt,
-              reportReviewed: true,
-              reportReviewedBy: currentUserName,
-              reportReviewedAt: now,
-              auditTrail: [
-                { action: "Report Reviewed", by: currentUserName, at: now },
-                ...(apt.auditTrail || [])
-              ].slice(0, 50),
-            }
+            ...apt,
+            reportReviewed: true,
+            reportReviewedBy: currentUserName,
+            reportReviewedAt: now,
+            auditTrail: [
+              { action: "Report Reviewed", by: currentUserName, at: now },
+              ...(apt.auditTrail || [])
+            ].slice(0, 50),
+          }
           : apt
       ));
 
@@ -282,7 +285,7 @@ export const ExecutiveDashboard: React.FC = () => {
 
   const uniqueReferees = Array.from(new Set(appointments.map((a) => a.referee || a.ar).filter(Boolean)));
   const uniqueVenues = Array.from(new Set(appointments.map((a) => a.venue)));
-  
+
 
   const handleLogout = async () => {
     const auth = getAuth();
@@ -364,139 +367,100 @@ export const ExecutiveDashboard: React.FC = () => {
     const hasRefReport = refereeReports.has(apt.id);
     const isReviewed = apt.reportReviewed;
 
+    // Helper for badge colors (static, no hooks used here)
+    const responseColor: any = {
+      accepted: "bg-emerald-100 text-emerald-700 border-emerald-200",
+      rejected: "bg-red-100 text-red-700 border-red-200",
+      pending: "bg-amber-100 text-amber-700 border-amber-200"
+    };
+
+    // Derive current response for the top badge
+    const refereeId = apt.refereeId;
+    const refereeResponse = (refereeId && apt.responses?.[refereeId])
+      ? apt.responses[refereeId]
+      : (apt.responses as any)?.referee?.status || apt.status || "pending";
+
     return (
-      <div className="flex flex-col sm:flex-row justify-between gap-4">
+      <div className="flex flex-col sm:flex-row justify-between gap-4 p-1">
+        {/* Left Side: Match Info */}
         <div className="flex-1">
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <h3 className="text-lg font-bold">{apt.homeTeam} vs {apt.awayTeam}</h3>
-            <Badge
-              variant={apt.status === "accepted" ? "success" : apt.status === "rejected" ? "danger" : "warning"}
-            >
-              {apt.status ? apt.status.toUpperCase() : "PENDING"}
+
+            {/* Main Status Badge */}
+            <Badge className={`px-3 py-1 rounded-full font-black text-[10px] uppercase border ${responseColor[refereeResponse]}`}>
+              {refereeResponse === "accepted" ? "✓ Confirmed" : refereeResponse === "rejected" ? "✕ Rejected" : "● Pending"}
             </Badge>
-            {apt.isSchoolGame && (
-              <Badge variant="outline" className="border-emerald-600 text-emerald-700 text-xs">
-                School
-              </Badge>
-            )}
 
-            {/* REFEREE REPORT STATUS */}
+            {apt.isSchoolGame && <Badge variant="outline" className="border-emerald-600 text-emerald-700 text-xs">School</Badge>}
+
+            {/* Report Badges */}
             {hasRefReport ? (
-              isReviewed ? (
-                <Badge variant="success" className="flex items-center gap-1 text-xs">
-                  <Eye className="w-3 h-3" /> Reviewed by {apt.reportReviewedBy}
-                </Badge>
-              ) : (
-                <Badge variant="success" className="flex items-center gap-1 text-xs">
-                  <CheckCircle2 className="w-3 h-3" /> Report
-                </Badge>
-              )
-            ) : isPast ? (
-              <Badge variant="secondary" className="text-xs">No Report</Badge>
-            ) : null}
+              <Badge variant="success" className="flex items-center gap-1 text-[10px] uppercase">
+                {isReviewed ? <><Eye className="w-3 h-3" /> Reviewed</> : <><CheckCircle2 className="w-3 h-3" /> Report Ready</>}
+              </Badge>
+            ) : isPast && <Badge variant="secondary" className="text-[10px] uppercase">No Report</Badge>}
 
-            {/* COACH REPORT */}
             {hasCoachReport && (
-              <Badge variant="emerald" className="flex items-center gap-1 text-xs">
+              <Badge variant="emerald" className="flex items-center gap-1 text-[10px] uppercase">
                 <User className="w-3 h-3" /> Coach
               </Badge>
             )}
           </div>
 
+          {/* Info Text */}
           <div className="text-sm text-gray-600 space-y-1">
             <p><strong>Date:</strong> {apt.date} • <strong>Time:</strong> {apt.time}</p>
             <p><strong>Venue:</strong> {apt.venue}</p>
             <p><strong>{roleLabel}:</strong> {officialName}</p>
-            {apt.coachName && <p><strong>Coach:</strong> {apt.coachName}</p>}
-            {apt.appointedBy && <p className="text-xs text-gray-500">Appointed by: {apt.appointedBy}</p>}
             {hasRefReport && apt.reportSubmittedBy && (
-              <p className="text-xs text-emerald-700 font-medium">
-                Report by: {apt.reportSubmittedBy}
-              </p>
+              <p className="text-xs text-emerald-700 font-medium">Report by: {apt.reportSubmittedBy}</p>
             )}
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:items-end">
-          <select
-            className="text-xs border rounded px-2 py-1"
-            value={apt.status || "pending"}
-            onChange={(e) => updateDoc(doc(db, "appointments", apt.id), { status: e.target.value })}
-            disabled={isPast}
-          >
-            <option value="pending">Pending</option>
-            <option value="accepted">Accepted</option>
-            <option value="rejected">Rejected</option>
-          </select>
+        {/* Right Side: Status Controls & Actions */}
+        <div className="flex flex-col gap-2">
+          <StatusBadge
+            apt={apt}
+            isPast={isPast}
+            hasRefReport={hasRefReport}
+            hasCoachReport={hasCoachReport}
+            isReviewed={isReviewed}
+            onReview={handleMarkReviewed}
+            onCoachReport={openCoachingForm}
+          />
 
+          {/* Edit/Delete Buttons */}
           {!isPast && (
-            <>
-              <Button size="sm" variant="outline" onClick={() => handleEditToggle(apt)}>
+            <div className="flex gap-2 justify-end mt-1">
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleEditToggle(apt)}>
                 {activeEditId === apt.id ? "Close" : "Edit"}
               </Button>
-              <Button size="sm" variant="danger" onClick={() => handleDelete(apt.id)}>Delete</Button>
-            </>
-          )}
-
-          {/* REVIEW BUTTON */}
-          {hasRefReport && !isReviewed && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-blue-600 text-blue-700 text-xs"
-              onClick={() => handleMarkReviewed(apt.id)}
-            >
-              <Eye className="w-3 h-3 mr-1" /> Mark Reviewed
-            </Button>
-          )}
-
-          {!hasCoachReport && !isPast && (
-            <Button
-              size="sm"
-              variant="default"
-              className="bg-gradient-to-r from-indigo-500 to-purple-600 text-xs"
-              onClick={() => openCoachingForm(apt)}
-            >
-              <MessageSquare className="w-3 h-3 mr-1" /> Report
-            </Button>
+              <Button size="sm" variant="danger" className="h-7 text-xs" onClick={() => handleDelete(apt.id)}>Delete</Button>
+            </div>
           )}
         </div>
 
+        {/* Nested Edit Form */}
         {activeEditId === apt.id && !isPast && (
-          <div className="mt-4 p-3 bg-gray-50 rounded-lg space-y-2 text-sm">
+          <div className="w-full mt-4 p-3 bg-gray-50 rounded-lg space-y-2 text-sm border">
             <div className="grid grid-cols-2 gap-2">
               <input type="date" value={editForm.date} onChange={(e) => setEditForm({ ...editForm, date: e.target.value })} className="border rounded px-2 py-1" />
               <input type="time" value={editForm.time} onChange={(e) => setEditForm({ ...editForm, time: e.target.value })} className="border rounded px-2 py-1" />
             </div>
             <input type="text" placeholder="Home" value={editForm.homeTeam} onChange={(e) => setEditForm({ ...editForm, homeTeam: e.target.value })} className="w-full border rounded px-2 py-1" />
             <input type="text" placeholder="Away" value={editForm.awayTeam} onChange={(e) => setEditForm({ ...editForm, awayTeam: e.target.value })} className="w-full border rounded px-2 py-1" />
-            <select value={editForm.venue} onChange={(e) => setEditForm({ ...editForm, venue: e.target.value })} className="w-full border rounded px-2 py-1">
-              {mockVenues.map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => handleSaveEdit(apt.id)} className="flex-1">Save</Button>
+              <Button size="sm" onClick={() => handleSaveEdit(apt.id)} className="flex-1">Save Changes</Button>
               <Button size="sm" variant="danger" onClick={() => setActiveEditId(null)} className="flex-1">Cancel</Button>
             </div>
-          </div>
-        )}
-
-        {showTrail && apt.auditTrail && apt.auditTrail.length > 0 && (
-          <div className="mt-3 pt-3 border-t text-xs text-gray-500">
-            <p className="font-medium mb-1">Trail:</p>
-            {apt.auditTrail.slice(0, 3).map((log, i) => {
-              const date = formatTimestamp(log.at);
-              return (
-                <p key={i}>
-                  • {log.action} by <span className="font-medium">{log.by}</span> at {format(date, "dd MMM HH:mm")}
-                </p>
-              );
-            })}
-            {apt.auditTrail.length > 3 && <p className="italic">...more</p>}
           </div>
         )}
       </div>
     );
   };
+
 
   return (
     <>
@@ -787,11 +751,10 @@ export const ExecutiveDashboard: React.FC = () => {
                     setActiveTab(tab.value as any);
                     setMobileMenuOpen(false);
                   }}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition ${
-                    activeTab === tab.value
-                      ? "bg-emerald-600 text-white"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition ${activeTab === tab.value
+                    ? "bg-emerald-600 text-white"
+                    : "text-gray-700 hover:bg-gray-100"
+                    }`}
                 >
                   {tab.label}
                 </button>
@@ -919,18 +882,18 @@ export const ExecutiveDashboard: React.FC = () => {
               </div>
             )}
 
-    {/* Match Cards View */}
-              {["results", "reports", "coaches", "referees", "teams", "matchcards"].includes(activeTab)
+            {/* Match Cards View */}
+            {["results", "reports", "coaches", "referees", "teams", "matchcards"].includes(activeTab)
               && (
-              <div className="bg-white rounded-xl p-4 shadow">
-                {activeTab === "results" && <ResultsView />}
-                {activeTab === "reports" && <ReportsTab />}
-                {activeTab === "coaches" && <CoachManagement />}
-                {activeTab === "referees" && <RefereeManagement />}
-                {activeTab === "matchcards" && <MatchCardsView />}
-                {activeTab === "teams" && <TeamRegistrationForm />}
-              </div>
-            )}
+                <div className="bg-white rounded-xl p-4 shadow">
+                  {activeTab === "results" && <ResultsView />}
+                  {activeTab === "reports" && <ReportsTab />}
+                  {activeTab === "coaches" && <CoachManagement />}
+                  {activeTab === "referees" && <RefereeManagement />}
+                  {activeTab === "matchcards" && <MatchCardsView />}
+                  {activeTab === "teams" && <TeamRegistrationForm />}
+                </div>
+              )}
           </div>
 
         </div>

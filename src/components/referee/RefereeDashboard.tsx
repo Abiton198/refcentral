@@ -8,6 +8,7 @@ import { Edit2 } from "lucide-react";
 import { db } from "../../lib/firebase";
 import { RefereeUnifiedReportCenter } from "./reports/RefereeUnifiedReportCenter";
 import { RefereeProfiles } from "../executive/RefereeProfiles";
+import MatchAppointmentModal from "./MatchAppointmentModal";
 
 import {
   Timestamp, getDoc, updateDoc, setDoc, doc, collection, query, where,
@@ -52,6 +53,7 @@ export const RefereeDashboard: React.FC = () => {
   const [isLoadingCard, setIsLoadingCard] = useState(false);
   const [editingMatch, setEditingMatch] = useState<any | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
+  const [pendingAppointment, setPendingAppointment] = useState<any | null>(null);
 
   // Result Form
   const [resultForm, setResultForm] = useState({
@@ -91,6 +93,77 @@ export const RefereeDashboard: React.FC = () => {
   };
 
 
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
+
+    const q = query(
+      collection(db, "appointments"),
+      where("refereeId", "==", auth.currentUser.uid)
+      // Note: We handle the 'pending' check in the snapshot logic 
+      // because Firestore 'empty map' queries can be tricky.
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const pending = snapshot.docs.find(doc => {
+        const data = doc.data();
+        // Logic: If there is no entry in the 'responses' map for this referee, it's new!
+        return !data.responses || Object.keys(data.responses).length === 0;
+      });
+
+      if (pending) {
+        setPendingAppointment({ id: pending.id, ...pending.data() });
+      } else {
+        setPendingAppointment(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [auth.currentUser]);
+
+
+  const handleAccept = async (aptId: string) => {
+    const aptRef = doc(db, "appointments", aptId);
+    const refereeId = auth.currentUser?.uid;
+
+    if (!refereeId) return;
+
+
+
+    await updateDoc(aptRef, {
+      // Add to the responses map so the modal knows it's dealt with
+      [`responses.${refereeId}`]: "accepted",
+      // Keep your audit trail consistent with the admin's format
+      auditTrail: arrayUnion({
+        action: "accepted",
+        by: auth.currentUser?.email || "Referee",
+        details: "Referee accepted the appointment",
+        timestamp: Timestamp.now()
+      }),
+      updatedAt: serverTimestamp()
+    });
+    setPendingAppointment(null);
+  };
+
+  const handleReject = async (id: string, reason: string) => {
+    const aptRef = doc(db, "appointments", id);
+    const timestamp = new Date().toISOString();
+
+    await updateDoc(aptRef, {
+      [`responses.${auth.currentUser?.uid}`]: "rejected",
+      rejectionReason: reason, // Store the reason you requested
+      auditTrail: arrayUnion({
+        action: "rejected",
+        by: auth.currentUser?.email || "Referee",
+        details: `Referee rejected: ${reason}`,
+        timestamp: timestamp
+      }),
+      updatedAt: serverTimestamp()
+    });
+    setPendingAppointment(null);
+  };
+
+  // 
   const handlePlayerToggle = (matchKey: string, player: any) => {
     setSelectedMatchPlayers(prev => {
       const current = prev[matchKey] || [];
@@ -400,6 +473,12 @@ export const RefereeDashboard: React.FC = () => {
           </div>
         </div>
 
+        {/* MATCH APPOINTMENT MODAL */}
+        <MatchAppointmentModal
+          appointment={pendingAppointment}
+          onAccept={handleAccept}
+          onReject={handleReject}
+        />
 
 
         {/* AVAILABILITY CONFIRMATION MODAL */}
