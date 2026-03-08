@@ -1,6 +1,7 @@
 {
   "short_name": "refCentral",
   "name": "refCentral",
+  "description": "Executive board dashboard for referees, reports, and results management.",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
@@ -18,20 +19,18 @@
   "background_color": "#ffffff",
   "theme_color": "#059669",
   "orientation": "portrait-primary",
-  "description": "Executive board dashboard for referees, reports, and results management."
-
-,"screenshots": [
+  "screenshots": [
     {
       "src": "/icons/home.png",
       "sizes": "320x320",
-      "type": "image/png"
+      "type": "image/png",
+      "form_factor": "narrow"
     },
     {
       "src": "/icons/home-desktop.png",
-      "sizes": "320x320",
+      "sizes": "1280x720", 
       "type": "image/png",
       "form_factor": "wide"
     }
   ]
-
 }

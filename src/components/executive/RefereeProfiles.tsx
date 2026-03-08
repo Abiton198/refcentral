@@ -8,10 +8,12 @@ import {
   query,
   where,
   onSnapshot,
+  serverTimestamp,
 } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../ui/Button";
 import { toast } from "../ui/use-toast";
+import { CheckCircle2, MapPin, ShieldCheck, XCircle } from "lucide-react";
 
 interface RefereeProfile {
   uid: string;
@@ -314,17 +316,25 @@ export const RefereeProfiles: React.FC<RefereeProfilesProps> = ({
 
   // 🧾 Executive Dashboard
   return (
-    <div className="max-w-7xl mx-auto py-10 px-4">
-      <h2 className="text-3xl font-bold mb-8 text-gray-800">🧾 Referee Profiles</h2>
+   <div className="max-w-7xl mx-auto py-10 px-4 space-y-12">
+      <div>
+        <h2 className="text-3xl font-black text-gray-900 flex items-center gap-3">
+          <ShieldCheck className="w-8 h-8 text-emerald-600" /> 
+          Referee Management
+        </h2>
+        <p className="text-gray-500 mt-2">Manage approvals and monitor live availability.</p>
+      </div>
+
       <ProfileSection
-        title="Approved Referees"
+        title="Approved & Active"
         color="emerald"
         refs={approvedRefs}
         expandedId={expandedId}
         toggleExpand={toggleExpand}
       />
+
       <ProfileSection
-        title="Pending Referees"
+        title="Pending Applications"
         color="amber"
         refs={pendingRefs}
         expandedId={expandedId}
@@ -334,9 +344,6 @@ export const RefereeProfiles: React.FC<RefereeProfilesProps> = ({
   );
 };
 
-// ---------------------------
-// 📦 Profile Section
-// ---------------------------
 interface ProfileSectionProps {
   title: string;
   color: string;
@@ -345,19 +352,27 @@ interface ProfileSectionProps {
   toggleExpand: (uid: string) => void;
 }
 
-const ProfileSection: React.FC<ProfileSectionProps> = ({
-  title,
-  color,
-  refs,
-  expandedId,
-  toggleExpand,
-}) => (
-  <section className="mb-10">
-    <h3 className={`text-2xl font-semibold text-${color}-700 mb-4`}>{title}</h3>
+// ---------------------------
+// 📦 Profile Section
+// ---------------------------
+const ProfileSection: React.FC<ProfileSectionProps> = ({ title, color, refs, expandedId, toggleExpand }) => (
+  <section>
+    <div className="flex items-center gap-4 mb-6">
+      <h3 className={`text-xl font-bold text-gray-800`}>{title}</h3>
+     <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+  color === 'emerald' 
+    ? 'bg-emerald-100 text-emerald-700' 
+    : 'bg-amber-100 text-amber-700'
+}`}>
+  {refs.length} Total
+</span>
+    </div>
     {refs.length === 0 ? (
-      <p className="text-gray-500">No {title.toLowerCase()} found.</p>
+      <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-8 text-center text-gray-400">
+        No {title.toLowerCase()} found.
+      </div>
     ) : (
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4">
         {refs.map((ref) => (
           <RefereeCard
             key={ref.uid}
@@ -371,92 +386,125 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({
   </section>
 );
 
+
 // ---------------------------
-// 🧱 Referee Card (Exec View)
+// 🧱 Referee Card (Exec View) - UPDATED WITH LIVE TOGGLE LOGIC
 // ---------------------------
 const RefereeCard: React.FC<{
   referee: RefereeProfile;
   expanded: boolean;
   onToggle: () => void;
 }> = ({ referee, expanded, onToggle }) => {
-  const handleApproval = async (approve: boolean) => {
+  
+  const isAvailable = referee.availabilityStatus === "Available";
+
+  const handleStatusUpdate = async (field: string, value: any) => {
     try {
-      await updateDoc(doc(db, "referees", referee.uid), { approved: approve });
-      await updateDoc(doc(db, "users", referee.uid), { approved: approve });
+      const updateData = { [field]: value, updatedAt: serverTimestamp() };
+      await updateDoc(doc(db, "referees", referee.uid), updateData);
+      await updateDoc(doc(db, "users", referee.uid), updateData);
+      
       toast({
-        title: approve ? "✅ Approved" : "❌ Rejected",
-        description: `${referee.firstName} ${referee.surname}`,
+        title: "Status Updated",
+        description: `${referee.firstName}'s ${field} is now ${value}`,
       });
     } catch (err) {
-      console.error("Error updating referee approval:", err);
+      console.error("Update error:", err);
+      toast({ variant: "destructive", title: "Update Failed" });
     }
   };
 
   return (
     <motion.div
       layout
-      className={`rounded-xl border ${
-        referee.approved ? "border-emerald-400" : "border-amber-400"
-      } bg-white shadow-sm overflow-hidden`}
+      className={`rounded-2xl border-2 transition-all ${
+        expanded ? "shadow-lg border-emerald-500" : "border-gray-100 hover:border-gray-200"
+      } bg-white overflow-hidden`}
     >
       <div
         onClick={onToggle}
-        className="flex justify-between items-center cursor-pointer p-5 hover:bg-gray-50"
+        className="flex flex-wrap justify-between items-center cursor-pointer p-5 gap-4"
       >
-        <div>
-          <h4 className="text-lg font-semibold text-gray-900">
-            {referee.firstName || "Unknown"} {referee.surname || ""}
-          </h4>
-          <p className="text-sm text-gray-500">
-            {referee.email || "N/A"} • {referee.mobileNumber || "N/A"}
-          </p>
-          {referee.currentLocation?.address && (
-            <p className="text-xs text-emerald-700 mt-1">
-              📍 {referee.currentLocation.address}
-            </p>
-          )}
+        <div className="flex items-center gap-4">
+          {/* LIVE STATUS INDICATOR */}
+          <div className="relative">
+            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center font-bold text-gray-400">
+              {referee.firstName?.[0]}{referee.surname?.[0]}
+            </div>
+            <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white animate-pulse ${isAvailable ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          </div>
+
+          <div>
+            <h4 className="text-lg font-black text-gray-900 uppercase tracking-tight">
+              {referee.firstName} {referee.surname}
+            </h4>
+            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-widest text-gray-400">
+              <span className={isAvailable ? "text-emerald-600" : "text-red-500"}>
+                {isAvailable ? "● Live & Available" : "○ Unavailable"}
+              </span>
+              <span>•</span>
+              <span>{referee.experienceLevel || "Level TBD"}</span>
+            </div>
+          </div>
         </div>
-        <span
-          className={`text-sm ${
-            referee.approved ? "text-emerald-700" : "text-amber-600"
-          }`}
-        >
-          {expanded ? "▲ Collapse" : "▼ Expand"}
-        </span>
+
+        <div className="flex items-center gap-2">
+           {referee.currentLocation?.address && (
+              <div className="hidden sm:flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md">
+                <MapPin size={10} /> {referee.currentLocation.address.split(',')[0]}
+              </div>
+            )}
+            <Button variant="ghost" size="sm" className="font-bold text-gray-400">
+              {expanded ? "Collapse" : "Manage"}
+            </Button>
+        </div>
       </div>
 
       <AnimatePresence>
         {expanded && (
           <motion.div
-            key="content"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="border-t p-5 bg-gray-50 space-y-2 text-sm text-gray-700"
+            className="border-t bg-gray-50/50 p-6"
           >
-            <p><strong>BokSmart:</strong> {referee.boksmartNumber || "—"} (Exp: {referee.boksmartExpiry || "N/A"})</p>
-            <p><strong>Experience:</strong> {referee.experienceLevel || "—"}</p>
-            <p><strong>Availability:</strong> {referee.availabilityStatus || "—"}</p>
-            <p><strong>Bank:</strong> {referee.bankName || "—"} • {referee.accountType || "—"}</p>
-            <p><strong>Location:</strong> {referee.currentLocation?.address || "—"}</p>
-
-            {!referee.approved && (
-              <div className="flex gap-3 pt-3">
-                <button
-                  onClick={() => handleApproval(true)}
-                  className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700"
-                >
-                  ✅ Approve
-                </button>
-                <button
-                  onClick={() => handleApproval(false)}
-                  className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
-                >
-                  ❌ Reject
-                </button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
+              <div className="space-y-3">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Contact & Compliance</p>
+                <p><strong>Email:</strong> {referee.email}</p>
+                <p><strong>BokSmart:</strong> {referee.boksmartNumber || "Missing"}</p>
+                <p><strong>Expiry:</strong> {referee.boksmartExpiry || "N/A"}</p>
               </div>
-            )}
+              
+              <div className="space-y-3">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Sizing & Kit</p>
+                <p><strong>Jersey:</strong> {referee.refJerseySize || "—"}</p>
+                <p><strong>Shorts:</strong> {referee.shortSize || "—"}</p>
+                <p><strong>Fit:</strong> {referee.preferredFit || "Standard"}</p>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Executive Actions</p>
+                <div className="flex flex-col gap-2">
+                  {!referee.approved ? (
+                    <Button 
+                      className="bg-emerald-600 w-full rounded-xl font-bold" 
+                      onClick={() => handleStatusUpdate("approved", true)}
+                    >
+                      <CheckCircle2 className="mr-2 w-4 h-4" /> Approve Official
+                    </Button>
+                  ) : (
+                    <Button 
+                      variant="outline" 
+                      className="text-red-600 border-red-100 hover:bg-red-50 w-full rounded-xl font-bold"
+                      onClick={() => handleStatusUpdate("approved", false)}
+                    >
+                      <XCircle className="mr-2 w-4 h-4" /> Suspend Account
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
