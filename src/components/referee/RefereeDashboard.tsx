@@ -32,6 +32,7 @@ export const RefereeDashboard: React.FC = () => {
   const user = auth.currentUser;
   const currentRefereeName = user?.displayName || "Referee";
   const currentRefereeId = user?.uid || "";
+  const currentUser = auth.currentUser;
 
   // Core States
   const [appointments, setAppointments] = useState<any[]>([]);
@@ -70,6 +71,20 @@ export const RefereeDashboard: React.FC = () => {
     venue: "",
     notes: "",
   });
+
+  const [hasInteracted, setHasInteracted] = useState(false);
+
+  useEffect(() => {
+    const handleInteraction = () => setHasInteracted(true);
+
+    window.addEventListener("click", handleInteraction, { once: true });
+    window.addEventListener("keydown", handleInteraction, { once: true });
+
+    return () => {
+      window.removeEventListener("click", handleInteraction);
+      window.removeEventListener("keydown", handleInteraction);
+    };
+  }, []);
 
   // 1. SAFE DATA FETCHING
   useEffect(() => {
@@ -422,6 +437,11 @@ export const RefereeDashboard: React.FC = () => {
 
   // Live Appointment
   useEffect(() => {
+    let hasInteracted = false;
+
+    const handleInteraction = () => { hasInteracted = true; };
+    window.addEventListener("click", handleInteraction, { once: true });
+    window.addEventListener("keydown", handleInteraction, { once: true });
 
     const q = query(
       collection(db, "appointments"),
@@ -429,39 +449,45 @@ export const RefereeDashboard: React.FC = () => {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-
       snapshot.docChanges().forEach((change) => {
-
         if (change.type === "added") {
-          const sound = new Audio("/notification.mp3");
-          sound.play();
-
           const data = change.doc.data();
 
-          if (!data.createdAt) return;
-
-          const now = Date.now();
-          const created = data.createdAt.toDate().getTime();
-
-          if (now - created < 10000) { // only last 10 seconds
-
-            setLiveAppointment({
-              id: change.doc.id,
-              ...data
+          // Browser notification
+          if (Notification.permission === "granted") {
+            new Notification("New Appointment!", {
+              body: `${data.homeTeam} vs ${data.awayTeam} at ${data.venue}`,
+              icon: "/icon-192x192.png"
             });
-
           }
 
+          // Optional sound (only after interaction)
+          if (hasInteracted) {
+            const audio = new Audio("/notification.mp3");
+            audio.play().catch(console.error);
+          }
+
+          // Only show appointments created in the last 10 seconds
+          if (data.createdAt) {
+            const now = Date.now();
+            const created = data.createdAt.toDate().getTime();
+            if (now - created < 10000) {
+              setLiveAppointment({
+                id: change.doc.id,
+                ...data
+              });
+            }
+          }
         }
-
       });
-
     });
 
-    return () => unsubscribe();
-
+    return () => {
+      unsubscribe();
+      window.removeEventListener("click", handleInteraction);
+      window.removeEventListener("keydown", handleInteraction);
+    };
   }, []);
-
 
   // 3. UI RENDER (With Loading Guard)
   if (loading) return (
@@ -591,6 +617,7 @@ export const RefereeDashboard: React.FC = () => {
                         const teamName = side === 'home' ? apt?.homeTeam : apt?.awayTeam;
                         const key = `${apt.id}_${side}`;
                         const count = selectedMatchPlayers[key]?.length || 0;
+
                         return (
                           <div key={side} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl border border-gray-100">
                             <div className="flex items-center gap-3">
@@ -654,13 +681,24 @@ export const RefereeDashboard: React.FC = () => {
                           />
                         </div>
                       </div>
-
                       <Button
-                        className="w-full bg-emerald-600 font-bold hover:bg-emerald-700 transition-all"
-                        disabled={!canSubmitResult(apt)}
-                        onClick={() => handleSubmitResult(apt)} // Calls the function with the match ID
+                        className={`w-full font-bold transition-all ${apt.responses?.[currentUser.uid] === "rejected"
+                          ? "bg-red-500 cursor-not-allowed"
+                          : "bg-emerald-600 hover:bg-emerald-700"
+                          }`}
+                        disabled={
+                          apt.responses?.[currentUser.uid] === "rejected" ||
+                          !canSubmitResult(apt)
+                        }
+                        onClick={() => {
+                          if (apt.responses?.[currentUser.uid] !== "rejected") {
+                            handleSubmitResult(apt);
+                          }
+                        }}
                       >
-                        SUBMIT RESULT
+                        {apt.responses?.[currentUser.uid] === "rejected"
+                          ? "APPOINTMENT REJECTED"
+                          : "SUBMIT RESULT"}
                       </Button>
                     </div>
                   </div>

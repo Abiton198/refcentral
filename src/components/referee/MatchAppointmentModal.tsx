@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Shield, MapPin, Clock, CheckCircle2, XCircle,
@@ -30,6 +30,11 @@ const MatchAppointmentModal: React.FC<MatchAppointmentModalProps> = ({
 }) => {
     const [view, setView] = useState<'offer' | 'reject' | 'reminder'>('offer');
     const [reason, setReason] = useState('');
+
+    useEffect(() => {
+        setView("offer");
+        setReason("");
+    }, [appointment]);
 
     if (!appointment) return null;
 
@@ -83,6 +88,7 @@ const MatchAppointmentModal: React.FC<MatchAppointmentModalProps> = ({
                                 </div>
                                 <div className="flex gap-3">
                                     <Button
+                                        type="button"
                                         onClick={() => setView('reject')}
                                         variant="outline"
                                         className="flex-1 h-14 rounded-2xl border-2 border-slate-100 font-bold text-slate-400 hover:text-red-500 hover:border-red-100"
