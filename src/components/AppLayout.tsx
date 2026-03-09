@@ -12,8 +12,9 @@ import { ExecutiveDashboard } from "./executive/ExecutiveDashboard";
 import { RefereeDashboard } from "./referee/RefereeDashboard";
 import { CoachDashboard } from "./coach/CoachDashboard";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth, db } from "../lib/firebase";
+import { auth, db, requestPushPermissionAndSaveToken } from "../lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
+import { getRedirectResult } from "firebase/auth";
 
 const AppLayout: React.FC = () => {
   const [userRole, setUserRole] = useState<string | null>(null);
@@ -21,29 +22,72 @@ const AppLayout: React.FC = () => {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const navigate = useNavigate();
 
-  // 🔹 Check authentication and approval status on load
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const userRef = doc(db, "users", user.uid);
-        const snap = await getDoc(userRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          setUserRole(data.role);
-          setIsApproved(data.approved);
 
-          // ✅ Redirect approved users automatically
-          if (data.approved) navigate(`/dashboard/${data.role}`);
+  /* ------------------------------------------------
+     Authentication + Push Notifications
+  ------------------------------------------------ */
+
+  useEffect(() => {
+
+    const unsub = onAuthStateChanged(auth, async (user) => {
+
+      if (user) {
+
+        try {
+
+          // 🔹 Get user profile
+          const userRef = doc(db, "users", user.uid);
+          const snap = await getDoc(userRef);
+
+          if (snap.exists()) {
+
+            const data = snap.data();
+
+            setUserRole(data.role);
+            setIsApproved(data.approved);
+
+            // 🔔 Request push notifications AFTER login
+            await requestPushPermissionAndSaveToken(user.uid);
+
+            // Redirect approved users
+            if (data.approved) {
+              navigate(`/dashboard/${data.role}`);
+            }
+
+          }
+
+        } catch (err) {
+          console.error("Auth check failed:", err);
         }
+
       } else {
+
         setUserRole(null);
         setIsApproved(false);
+
       }
+
       setCheckingAuth(false);
+
     });
 
     return () => unsub();
+
   }, [navigate]);
+
+  // 🔹 Handle redirect result
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result) {
+          // User is signed in!
+          console.log("User:", result.user);
+        }
+      })
+      .catch((error) => {
+        console.error("Redirect Error:", error.code);
+      });
+  }, []);
 
   // 🔹 Handle Logout
   const handleLogout = () => {

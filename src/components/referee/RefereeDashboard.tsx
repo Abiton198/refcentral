@@ -25,6 +25,7 @@ import {
 import { LawsOfTheGameWidget } from "@/components/LawsOfTheGameWidget";
 import { PlayerRegistrationModal } from "./PlayerRegistrationModal";
 import { motion } from "framer-motion";
+import AppointmentAlert from "@/lib/AppointmentAlert";
 
 export const RefereeDashboard: React.FC = () => {
   const auth = getAuth();
@@ -54,6 +55,9 @@ export const RefereeDashboard: React.FC = () => {
   const [editingMatch, setEditingMatch] = useState<any | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
   const [pendingAppointment, setPendingAppointment] = useState<any | null>(null);
+  const [liveAppointment, setLiveAppointment] = useState<any | null>(null);
+  const [selectedAppointment, setSelectedAppointment] = useState<any | null>(null);
+
 
   // Result Form
   const [resultForm, setResultForm] = useState({
@@ -120,7 +124,6 @@ export const RefereeDashboard: React.FC = () => {
 
     return () => unsubscribe();
   }, [auth.currentUser]);
-
 
   const handleAccept = async (aptId: string) => {
     const aptRef = doc(db, "appointments", aptId);
@@ -417,6 +420,49 @@ export const RefereeDashboard: React.FC = () => {
     setViewingResult(null);
   };
 
+  // Live Appointment
+  useEffect(() => {
+
+    const q = query(
+      collection(db, "appointments"),
+      where("refereeId", "==", auth.currentUser?.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+
+      snapshot.docChanges().forEach((change) => {
+
+        if (change.type === "added") {
+          const sound = new Audio("/notification.mp3");
+          sound.play();
+
+          const data = change.doc.data();
+
+          if (!data.createdAt) return;
+
+          const now = Date.now();
+          const created = data.createdAt.toDate().getTime();
+
+          if (now - created < 10000) { // only last 10 seconds
+
+            setLiveAppointment({
+              id: change.doc.id,
+              ...data
+            });
+
+          }
+
+        }
+
+      });
+
+    });
+
+    return () => unsubscribe();
+
+  }, []);
+
+
   // 3. UI RENDER (With Loading Guard)
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-emerald-50">
@@ -475,11 +521,17 @@ export const RefereeDashboard: React.FC = () => {
 
         {/* MATCH APPOINTMENT MODAL */}
         <MatchAppointmentModal
-          appointment={pendingAppointment}
+          // appointment={pendingAppointment}
+          appointment={selectedAppointment}
           onAccept={handleAccept}
           onReject={handleReject}
         />
 
+        {/* Appointment Alert */}
+        <AppointmentAlert
+          appointment={liveAppointment}
+          onOpen={() => setSelectedAppointment(liveAppointment)}
+        />
 
         {/* AVAILABILITY CONFIRMATION MODAL */}
         {availabilityModal && (
