@@ -71,19 +71,25 @@ export const RefereeDashboard: React.FC = () => {
     venue: "",
     notes: "",
   });
-
   const [hasInteracted, setHasInteracted] = useState(false);
 
   useEffect(() => {
     const handleInteraction = () => setHasInteracted(true);
-
     window.addEventListener("click", handleInteraction, { once: true });
     window.addEventListener("keydown", handleInteraction, { once: true });
-
     return () => {
       window.removeEventListener("click", handleInteraction);
       window.removeEventListener("keydown", handleInteraction);
     };
+  }, []);
+
+
+  useEffect(() => {
+    if (Notification.permission === "default") {
+      Notification.requestPermission().then((permission) => {
+        console.log("Notification permission:", permission);
+      });
+    }
   }, []);
 
   // 1. SAFE DATA FETCHING
@@ -416,6 +422,7 @@ export const RefereeDashboard: React.FC = () => {
     setShowEditForm(false);
   };
 
+
   const handleInitiateEdit = (matchData: any) => {
     // We check the 24-hour rule one last time before opening the form
     const now = new Date().getTime();
@@ -466,7 +473,6 @@ export const RefereeDashboard: React.FC = () => {
             const audio = new Audio("/notification.mp3");
             audio.play().catch(console.error);
           }
-
           // Only show appointments created in the last 10 seconds
           if (data.createdAt) {
             const now = Date.now();
@@ -488,6 +494,41 @@ export const RefereeDashboard: React.FC = () => {
       window.removeEventListener("keydown", handleInteraction);
     };
   }, []);
+
+  const handleAcceptAppointment = async (id: string) => {
+    try {
+
+      const ref = doc(db, "appointments", id);
+
+      await updateDoc(ref, {
+        status: "accepted",
+        acceptedAt: new Date()
+      });
+
+      setLiveAppointment(null);
+
+    } catch (error) {
+      console.error("Error accepting appointment:", error);
+    }
+  };
+
+  const handleRejectAppointment = async (id: string, reason: string) => {
+    try {
+
+      const ref = doc(db, "appointments", id);
+
+      await updateDoc(ref, {
+        status: "rejected",
+        rejectionReason: reason,
+        rejectedAt: new Date()
+      });
+
+      setLiveAppointment(null);
+
+    } catch (error) {
+      console.error("Error rejecting appointment:", error);
+    }
+  };
 
   // 3. UI RENDER (With Loading Guard)
   if (loading) return (
@@ -547,10 +588,9 @@ export const RefereeDashboard: React.FC = () => {
 
         {/* MATCH APPOINTMENT MODAL */}
         <MatchAppointmentModal
-          // appointment={pendingAppointment}
-          appointment={selectedAppointment}
-          onAccept={handleAccept}
-          onReject={handleReject}
+          appointment={liveAppointment}
+          onAccept={handleAcceptAppointment}
+          onReject={handleRejectAppointment}
         />
 
         {/* Appointment Alert */}
