@@ -1,4 +1,5 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: {
@@ -43,6 +44,18 @@ const styles: { [key: string]: React.CSSProperties } = {
 
 
 const PrivacyPolicy: React.FC = () => {
+
+  const navigate = useNavigate();
+
+  const BackHomeButton = () => (
+    <button
+      onClick={() => navigate("/")}
+      className="block mx-auto mt-6 text-sm text-gray-500 underline hover:text-emerald-600 transition"
+    >
+      ← Back to Home
+    </button>
+  );
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
@@ -51,6 +64,8 @@ const PrivacyPolicy: React.FC = () => {
           alt="Eastern Province Referees Society Logo"
           style={styles.logo}
         />
+
+        <div className="flex justify-end"> {BackHomeButton()} </div>
         <h1 style={styles.title}>Privacy Policy</h1>
       </header>
 

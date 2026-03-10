@@ -1,3 +1,6 @@
+import Deletion from '@/pages/Deletion';
+import PrivacyPolicy from '@/pages/privacy-policy';
+import { Link } from 'lucide-react';
 import React from 'react';
 
 export const Footer: React.FC = () => {
@@ -18,7 +21,7 @@ export const Footer: React.FC = () => {
               The professional standard for rugby official management. Authority, Integrity, and Innovation on and off the pitch.
             </p>
           </div>
-          
+
           <div>
             <h4 className="font-bold mb-4 text-gray-200">Quick Links</h4>
             <ul className="space-y-2 text-sm text-gray-500">
@@ -27,7 +30,7 @@ export const Footer: React.FC = () => {
               <li><a href="/reports" className="hover:text-amber-400 transition-colors">Match Reports</a></li>
             </ul>
           </div>
-          
+
           <div>
             <h4 className="font-bold mb-4 text-gray-200">Support</h4>
             <ul className="space-y-2 text-sm text-gray-500">
@@ -36,17 +39,18 @@ export const Footer: React.FC = () => {
               <li><a href="#" className="hover:text-amber-400 transition-colors">Training Docs</a></li>
             </ul>
           </div>
-          
+
           <div>
             <h4 className="font-bold mb-4 text-gray-200">Legal</h4>
             <ul className="space-y-2 text-sm text-gray-500">
               <li><a href="/privacy-policy" className="hover:text-amber-400 transition-colors">Privacy Policy</a></li>
+              <li><a href="/data-deletion" className="hover:text-amber-400 transition-colors">Data Deletion</a></li>
               <li><a href="#" className="hover:text-amber-400 transition-colors">Terms of Service</a></li>
               <li><a href="#" className="hover:text-amber-400 transition-colors">Code of Conduct</a></li>
             </ul>
           </div>
         </div>
-        
+
         {/* Bottom Bar */}
         <div className="border-t border-gray-800 pt-8 flex flex-col items-center">
           <p className="text-gray-500 text-sm">
@@ -55,7 +59,7 @@ export const Footer: React.FC = () => {
           <p className="text-gray-600 text-[11px] mt-1 font-medium italic">
             Built with pride for the rugby refereeing community.
           </p>
-          
+
           <div className="mt-6 flex items-center gap-3">
             <div className="flex items-center gap-1.5 px-3 py-1 bg-gray-800/50 rounded-full border border-gray-700/50">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -70,6 +74,7 @@ export const Footer: React.FC = () => {
           </div>
         </div>
       </div>
+
     </footer>
   );
 };

@@ -1,6 +1,11 @@
 // src/components/auth/RoleBasedAuth.tsx
 import React, { useState, useEffect } from "react";
-import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import {
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 import {
   doc,
   getDoc,
@@ -20,6 +25,7 @@ import { Button } from "./ui/Button";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import sha256 from "crypto-js/sha256";
+
 
 /* -------------------------------------------------
    SVG ICONS – Inline so they never fail to load
@@ -87,24 +93,13 @@ export const RoleBasedAuth: React.FC = () => {
   const [executiveRole, setExecutiveRole] = useState<string>("");
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [redirecting, setRedirecting] = useState(false);
+  const [showPasswordLogin, setShowPasswordLogin] = useState(false); // ← new state
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // Detect role & action from URL
-  useEffect(() => {
-    const queryParams = new URLSearchParams(window.location.search);
-    const roleParam = queryParams.get("role") as UserRole | null;
-    const path = window.location.pathname;
-    const actionParam = path.includes("register")
-      ? "register"
-      : path.includes("login")
-      ? "login"
-      : null;
 
-    if (roleParam) setRole(roleParam);
-    if (actionParam) setAction(actionParam);
-  }, []);
-
-  // Back to Home – always visible
   const BackHomeButton = () => (
     <button
       onClick={() => navigate("/")}
@@ -114,30 +109,64 @@ export const RoleBasedAuth: React.FC = () => {
     </button>
   );
 
+  // Detect role & action from URL
+  useEffect(() => {
+    const queryParams = new URLSearchParams(window.location.search);
+    const roleParam = queryParams.get("role") as UserRole | null;
+    const path = window.location.pathname;
+    const actionParam = path.includes("register")
+      ? "register"
+      : path.includes("login")
+        ? "login"
+        : null;
+
+    if (roleParam) setRole(roleParam);
+    if (actionParam) setAction(actionParam);
+  }, []);
+
   // Auth listener
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (currentUser) => {
       if (!currentUser) {
         setUser(null);
         setIsNewUser(false);
+        setStatusMessage("");
         return;
       }
 
       setUser(currentUser);
+
       const userRef = doc(db, "users", currentUser.uid);
       const snap = await getDoc(userRef);
 
       if (snap.exists()) {
         const data = snap.data();
+
+        // User document exists → check approval and role
         if (data.approved === true) {
-          navigate(`/dashboard/${data.role}`);
+          const userRole = data.role as UserRole | undefined;
+
+          if (userRole) {
+            // Valid role exists → redirect to dashboard
+            navigate(`/dashboard/${userRole}`);
+          } else {
+            // Edge case: approved but no role assigned
+            setStatusMessage("Account approved but no role assigned. Contact support.");
+          }
         } else {
+          // Exists but not yet approved
           setStatusMessage("Registration received. Waiting for executive approval...");
         }
+      } else {
+        // No user document → new / incomplete registration
+        setIsNewUser(true);
+        setStatusMessage("Please complete your registration to continue.");
       }
     });
+
     return () => unsub();
   }, [navigate]);
+
 
   // Google Sign-In
   const handleGoogleAuth = async () => {
@@ -189,6 +218,45 @@ export const RoleBasedAuth: React.FC = () => {
     }
   };
 
+  // Email/Password Login
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+
+    if (!email || !password) {
+      setLoginError("Please enter both email and password.");
+      return;
+    }
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const signedUser = userCredential.user;
+      setUser(signedUser);
+
+      const userRef = doc(db, "users", signedUser.uid);
+      const snap = await getDoc(userRef);
+
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.approved === true) {
+          navigate(`/dashboard/${data.role}`);
+        } else {
+          setStatusMessage("Account found but awaiting executive approval...");
+        }
+      } else {
+        setLoginError("No account found with this email. Please register first.");
+        await signOut(auth);
+      }
+    } catch (err: any) {
+      console.error("Email login error:", err);
+      let message = "Login failed. Please try again.";
+      if (err.code === "auth/user-not-found") message = "No user found with this email.";
+      if (err.code === "auth/wrong-password") message = "Incorrect password.";
+      if (err.code === "auth/invalid-email") message = "Invalid email format.";
+      setLoginError(message);
+    }
+  };
+
   // Form submission (executive only)
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,8 +276,8 @@ export const RoleBasedAuth: React.FC = () => {
 
       const roleCollection =
         role === "referee" ? "referees" :
-        role === "coach" ? "coaches" :
-        "executives";
+          role === "coach" ? "coaches" :
+            "executives";
 
       const isExecutive = role === "executive";
       const approved = isExecutive ? true : false;
@@ -250,10 +318,13 @@ export const RoleBasedAuth: React.FC = () => {
     await signOut(auth);
     setUser(null);
     setIsNewUser(false);
-    setStatusMessage("");
     setAction(null);
     setRole(null);
     setExecutiveRole("");
+    setShowPasswordLogin(false);
+    setEmail("");
+    setPassword("");
+    setLoginError(null);
   };
 
   // Render registration form
@@ -341,9 +412,8 @@ export const RoleBasedAuth: React.FC = () => {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className={`fixed top-5 right-5 px-5 py-3 rounded-lg shadow-lg text-white z-50 ${
-              toast.type === "success" ? "bg-emerald-600" : "bg-red-600"
-            }`}
+            className={`fixed top-5 right-5 px-5 py-3 rounded-lg shadow-lg text-white z-50 ${toast.type === "success" ? "bg-emerald-600" : "bg-red-600"
+              }`}
           >
             {toast.message}
           </motion.div>
@@ -397,7 +467,7 @@ export const RoleBasedAuth: React.FC = () => {
         </>
       )}
 
-      {/* GOOGLE AUTH */}
+      {/* GOOGLE AUTH + PASSWORD LINK */}
       {action && !user && (
         <>
           <div className="mt-10">
@@ -405,16 +475,76 @@ export const RoleBasedAuth: React.FC = () => {
               {action === "register" ? "Register" : "Sign in"} as{" "}
               <span className="text-emerald-600 capitalize">{role}</span>
             </h3>
+
             <button
               onClick={handleGoogleAuth}
-              className="bg-emerald-600 text-white px-6 py-3 rounded-lg hover:bg-emerald-700"
+              className="bg-emerald-600 text-white px-6 py-3 rounded-lg hover:bg-emerald-700 w-full max-w-xs mx-auto block"
             >
               Continue with Google
             </button>
+
+            {/* Login with password link – only shown when action = "login" */}
+            {action === "login" && (
+              <button
+                onClick={() => setShowPasswordLogin(!showPasswordLogin)}
+                className="mt-4 text-xs uppercase tracking-wide text-emerald-600 underline hover:text-emerald-800 transition"
+              >
+                {showPasswordLogin ? "Hide " : "Login with "}Password
+              </button>
+            )}
+
             {statusMessage && (
               <p className="mt-4 text-sm text-gray-700">{statusMessage}</p>
             )}
           </div>
+
+          {/* Email/Password Form – appears when toggled */}
+          <AnimatePresence>
+            {action === "login" && showPasswordLogin && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.3 }}
+                className="mt-6 overflow-hidden"
+              >
+                <form onSubmit={handleEmailLogin} className="max-w-xs mx-auto space-y-4">
+                  <div>
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {loginError && (
+                    <p className="text-red-600 text-sm">{loginError}</p>
+                  )}
+
+                  <Button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg"
+                  >
+                    Sign in with Email
+                  </Button>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <BackHomeButton />
         </>
       )}
