@@ -20,8 +20,16 @@ export default function AppointmentAlert({ appointment, onOpen }) {
                     </p>
 
                     <button
-                        onClick={onOpen}
-                        className="text-emerald-600 text-xs font-bold mt-2"
+                        onClick={() => {
+                            console.log("VIEW MATCH CLICKED");
+
+                            if (onOpen) {
+                                onOpen();
+                            } else {
+                                console.warn("onOpen not passed!");
+                            }
+                        }}
+                        className="text-emerald-600 text-sm font-bold mt-2 py-2"
                     >
                         VIEW MATCH
                     </button>

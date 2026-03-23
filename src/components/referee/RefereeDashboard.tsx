@@ -9,6 +9,7 @@ import { db } from "../../lib/firebase";
 import { RefereeUnifiedReportCenter } from "./reports/RefereeUnifiedReportCenter";
 import { RefereeProfiles } from "../executive/RefereeProfiles";
 import MatchAppointmentModal from "./MatchAppointmentModal";
+import { useNavigate } from "react-router-dom";
 
 import {
   Timestamp, getDoc, updateDoc, setDoc, doc, collection, query, where,
@@ -33,6 +34,7 @@ export const RefereeDashboard: React.FC = () => {
   const currentRefereeName = user?.displayName || "Referee";
   const currentRefereeId = user?.uid || "";
   const currentUser = auth.currentUser;
+  const navigate = useNavigate();
 
   // Core States
   const [appointments, setAppointments] = useState<any[]>([]);
@@ -588,10 +590,17 @@ export const RefereeDashboard: React.FC = () => {
 
         {/* MATCH APPOINTMENT MODAL */}
         <MatchAppointmentModal
-          appointment={liveAppointment}
-          onAccept={handleAcceptAppointment}
-          onReject={handleRejectAppointment}
+          appointment={selectedAppointment}
+          onAccept={(id) => {
+            handleAcceptAppointment(id);
+            setSelectedAppointment(null);
+          }}
+          onReject={(id, reason) => {
+            handleRejectAppointment(id, reason);
+            setSelectedAppointment(null);
+          }}
         />
+
 
         {/* Appointment Alert */}
         <AppointmentAlert
