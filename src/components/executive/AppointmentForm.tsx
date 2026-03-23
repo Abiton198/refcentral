@@ -18,6 +18,7 @@ import {
 import { getAuth } from "firebase/auth";
 import { toast } from "@/components/ui/use-toast";
 import { Search, ArrowUpDown } from "lucide-react";
+import SearchSelect from "@/lib/SearchSelect";
 
 export const AppointmentForm: React.FC = () => {
   const [referees, setReferees] = useState<any[]>([]);
@@ -229,6 +230,7 @@ export const AppointmentForm: React.FC = () => {
     }
   };
 
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -247,23 +249,24 @@ export const AppointmentForm: React.FC = () => {
             <input type="time" value={formData.time} onChange={(e) => setFormData({ ...formData, time: e.target.value })} className="border rounded-lg px-4 py-2" required />
           </div>
 
-          {/* Teams */}
-          <select value={formData.homeTeam} onChange={(e) => setFormData({ ...formData, homeTeam: e.target.value })} className="w-full border rounded-lg px-4 py-2" required>
-            <option value="">Select Home Team</option>
-            {teams.map((team) => (
-              <option key={team.id} value={team.name}>{team.name}</option>
-            ))}
-          </select>
-
-          <select value={formData.awayTeam} onChange={(e) => setFormData({ ...formData, awayTeam: e.target.value })} className="w-full border rounded-lg px-4 py-2" required>
-            <option value="">Select Away Team</option>
-            {teams
-              .filter((t) => t.name !== formData.homeTeam)
-              .map((team) => (
-                <option key={team.id} value={team.name}>{team.name}</option>
-              ))}
-          </select>
-
+          {/* Home Team */}
+          <SearchSelect
+            value={formData.homeTeam}
+            onChange={(value) =>
+              setFormData({ ...formData, homeTeam: value })
+            }
+            options={teams}
+            placeholder="Select Home Team"
+          />
+          {/* Away Team */}
+          <SearchSelect
+            value={formData.awayTeam}
+            onChange={(value) =>
+              setFormData({ ...formData, awayTeam: value })
+            }
+            options={teams.filter((t) => t.name !== formData.homeTeam)}
+            placeholder="Select Away Team"
+          />
           <input type="text" value={formData.venue} onChange={(e) => setFormData({ ...formData, venue: e.target.value })} className="w-full border rounded-lg px-4 py-2" placeholder="Venue" required />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

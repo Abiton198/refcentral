@@ -9,7 +9,7 @@ export default function AppointmentAlert({ appointment, onOpen }) {
                     initial={{ y: -80, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     exit={{ y: -80, opacity: 0 }}
-                    className="fixed top-6 left-1/2 -translate-x-1/2 bg-white shadow-xl border rounded-xl p-4 z-50"
+                    className="fixed top-4 left-4 right-4 bg-white shadow-xl border rounded-xl p-4 z-[9999]"
                 >
                     <h3 className="font-bold text-sm">
                         🏉 New Appointment Assigned

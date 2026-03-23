@@ -477,7 +477,7 @@ export const RefereeDashboard: React.FC = () => {
           if (data.createdAt) {
             const now = Date.now();
             const created = data.createdAt.toDate().getTime();
-            if (now - created < 10000) {
+            if (!data.seenBy?.includes(auth.currentUser.uid)) {
               setLiveAppointment({
                 id: change.doc.id,
                 ...data
