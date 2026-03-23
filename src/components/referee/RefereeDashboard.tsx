@@ -46,6 +46,8 @@ export const RefereeDashboard: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [viewProfile, setViewProfile] = useState(false);
+  const [pendingAppointment, setPendingAppointment] = useState<any | null>(null);
+  const [liveAppointment, setLiveAppointment] = useState<any | null>(null);
 
   // Match Logic States
   const [selectedMatchPlayers, setSelectedMatchPlayers] = useState<{ [key: string]: any[] }>({});
@@ -57,9 +59,6 @@ export const RefereeDashboard: React.FC = () => {
   const [isLoadingCard, setIsLoadingCard] = useState(false);
   const [editingMatch, setEditingMatch] = useState<any | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
-  const [pendingAppointment, setPendingAppointment] = useState<any | null>(null);
-  const [liveAppointment, setLiveAppointment] = useState<any | null>(null);
-  const [selectedAppointment, setSelectedAppointment] = useState<any | null>(null);
 
 
   // Result Form
@@ -72,6 +71,7 @@ export const RefereeDashboard: React.FC = () => {
     awayTries: "",
     venue: "",
     notes: "",
+    status: "pending",
   });
   const [hasInteracted, setHasInteracted] = useState(false);
 
@@ -120,75 +120,6 @@ export const RefereeDashboard: React.FC = () => {
   };
 
 
-
-  useEffect(() => {
-    if (!auth.currentUser) return;
-
-    const q = query(
-      collection(db, "appointments"),
-      where("refereeId", "==", auth.currentUser.uid)
-      // Note: We handle the 'pending' check in the snapshot logic 
-      // because Firestore 'empty map' queries can be tricky.
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const pending = snapshot.docs.find(doc => {
-        const data = doc.data();
-        // Logic: If there is no entry in the 'responses' map for this referee, it's new!
-        return !data.responses || Object.keys(data.responses).length === 0;
-      });
-
-      if (pending) {
-        setPendingAppointment({ id: pending.id, ...pending.data() });
-      } else {
-        setPendingAppointment(null);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [auth.currentUser]);
-
-  const handleAccept = async (aptId: string) => {
-    const aptRef = doc(db, "appointments", aptId);
-    const refereeId = auth.currentUser?.uid;
-
-    if (!refereeId) return;
-
-
-
-    await updateDoc(aptRef, {
-      // Add to the responses map so the modal knows it's dealt with
-      [`responses.${refereeId}`]: "accepted",
-      // Keep your audit trail consistent with the admin's format
-      auditTrail: arrayUnion({
-        action: "accepted",
-        by: auth.currentUser?.email || "Referee",
-        details: "Referee accepted the appointment",
-        timestamp: Timestamp.now()
-      }),
-      updatedAt: serverTimestamp()
-    });
-    setPendingAppointment(null);
-  };
-
-  const handleReject = async (id: string, reason: string) => {
-    const aptRef = doc(db, "appointments", id);
-    const timestamp = new Date().toISOString();
-
-    await updateDoc(aptRef, {
-      [`responses.${auth.currentUser?.uid}`]: "rejected",
-      rejectionReason: reason, // Store the reason you requested
-      auditTrail: arrayUnion({
-        action: "rejected",
-        by: auth.currentUser?.email || "Referee",
-        details: `Referee rejected: ${reason}`,
-        timestamp: timestamp
-      }),
-      updatedAt: serverTimestamp()
-    });
-    setPendingAppointment(null);
-  };
-
   // 
   const handlePlayerToggle = (matchKey: string, player: any) => {
     setSelectedMatchPlayers(prev => {
@@ -216,6 +147,16 @@ export const RefereeDashboard: React.FC = () => {
       return;
     }
 
+    // 🔹 Check if the match has been accepted by the referee
+    if (apt.status !== "accepted") {
+      toast({
+        variant: "destructive",
+        title: "Match Not Accepted",
+        description: "You must accept the match before submitting the result.",
+      });
+      return;
+    }
+
 
     try {
       // 1. Create the Result document (Creates if missing, overwrites if exists)
@@ -234,6 +175,7 @@ export const RefereeDashboard: React.FC = () => {
         homeSquad: selectedMatchPlayers[`${aptId}_home`] || [],
         awaySquad: selectedMatchPlayers[`${aptId}_away`] || [],
         venue: apt.venue,
+
         submittedAt: serverTimestamp(),
         submittedBy: currentRefereeId,
         editCount: 0,
@@ -247,7 +189,7 @@ export const RefereeDashboard: React.FC = () => {
       });
 
       toast({ title: "Success", description: "Match result created and recorded." });
-      setResultForm({ appointmentId: "", refereeName: "", homeScore: "", awayScore: "", homeTries: "", awayTries: "", venue: "", notes: "" });
+      setResultForm({ appointmentId: "", refereeName: "", homeScore: "", awayScore: "", homeTries: "", awayTries: "", venue: "", notes: "", status: "" });
 
     } catch (error) {
       console.error("Submission error:", error);
@@ -444,93 +386,7 @@ export const RefereeDashboard: React.FC = () => {
     setViewingResult(null);
   };
 
-  // Live Appointment
-  useEffect(() => {
-    let hasInteracted = false;
 
-    const handleInteraction = () => { hasInteracted = true; };
-    window.addEventListener("click", handleInteraction, { once: true });
-    window.addEventListener("keydown", handleInteraction, { once: true });
-
-    const q = query(
-      collection(db, "appointments"),
-      where("refereeId", "==", auth.currentUser?.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === "added") {
-          const data = change.doc.data();
-
-          // Browser notification
-          if (Notification.permission === "granted") {
-            new Notification("New Appointment!", {
-              body: `${data.homeTeam} vs ${data.awayTeam} at ${data.venue}`,
-              icon: "/icon-192x192.png"
-            });
-          }
-
-          // Optional sound (only after interaction)
-          if (hasInteracted) {
-            const audio = new Audio("/notification.mp3");
-            audio.play().catch(console.error);
-          }
-          // Only show appointments created in the last 10 seconds
-          if (data.createdAt) {
-            const now = Date.now();
-            const created = data.createdAt.toDate().getTime();
-            if (!data.seenBy?.includes(auth.currentUser.uid)) {
-              setLiveAppointment({
-                id: change.doc.id,
-                ...data
-              });
-            }
-          }
-        }
-      });
-    });
-
-    return () => {
-      unsubscribe();
-      window.removeEventListener("click", handleInteraction);
-      window.removeEventListener("keydown", handleInteraction);
-    };
-  }, []);
-
-  const handleAcceptAppointment = async (id: string) => {
-    try {
-
-      const ref = doc(db, "appointments", id);
-
-      await updateDoc(ref, {
-        status: "accepted",
-        acceptedAt: new Date()
-      });
-
-      setLiveAppointment(null);
-
-    } catch (error) {
-      console.error("Error accepting appointment:", error);
-    }
-  };
-
-  const handleRejectAppointment = async (id: string, reason: string) => {
-    try {
-
-      const ref = doc(db, "appointments", id);
-
-      await updateDoc(ref, {
-        status: "rejected",
-        rejectionReason: reason,
-        rejectedAt: new Date()
-      });
-
-      setLiveAppointment(null);
-
-    } catch (error) {
-      console.error("Error rejecting appointment:", error);
-    }
-  };
 
   // 3. UI RENDER (With Loading Guard)
   if (loading) return (
@@ -590,22 +446,20 @@ export const RefereeDashboard: React.FC = () => {
 
         {/* MATCH APPOINTMENT MODAL */}
         <MatchAppointmentModal
-          appointment={selectedAppointment}
-          onAccept={(id) => {
-            handleAcceptAppointment(id);
-            setSelectedAppointment(null);
-          }}
-          onReject={(id, reason) => {
-            handleRejectAppointment(id, reason);
-            setSelectedAppointment(null);
-          }}
         />
 
 
         {/* Appointment Alert */}
         <AppointmentAlert
-          appointment={liveAppointment}
-          onOpen={() => setSelectedAppointment(liveAppointment)}
+          // Use the local appointments state to find the most recent pending match
+          appointment={appointments.find(apt =>
+            apt.status === "pending" &&
+            (!apt.responses || !apt.responses[user?.uid])
+          )}
+          onOpen={() => {
+            // This can stay empty because the MatchAppointmentModal 
+            // will automatically detect the 'pending' status and pop up.
+          }}
         />
 
         {/* AVAILABILITY CONFIRMATION MODAL */}
@@ -667,23 +521,48 @@ export const RefereeDashboard: React.FC = () => {
                         const key = `${apt.id}_${side}`;
                         const count = selectedMatchPlayers[key]?.length || 0;
 
+                        // Check if this specific match is rejected by the current user
+                        const isRejected = apt.responses?.[user?.uid] === "rejected";
+
+
+
                         return (
-                          <div key={side} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                          <div
+                            key={side}
+                            className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${isRejected
+                              ? 'bg-gray-100 border-gray-200 opacity-60 grayscale'
+                              : 'bg-gray-50 border-gray-100'
+                              }`}
+                          >
                             <div className="flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs ${side === 'home' ? 'bg-blue-600' : 'bg-red-600'}`}>
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs ${isRejected ? 'bg-gray-400' : (side === 'home' ? 'bg-blue-600' : 'bg-red-600')
+                                }`}>
                                 {teamName?.[0] || "?"}
                               </div>
                               <div>
                                 <p className="font-bold text-sm text-gray-800">{teamName}</p>
-                                <p className="text-[9px] text-gray-500">{count} Players</p>
+                                <p className="text-[9px] text-gray-500">
+                                  {isRejected ? "Selection Blocked" : `${count} Players`}
+                                </p>
                               </div>
                             </div>
+
                             <Button
                               size="sm"
-                              className="h-8 text-xs bg-emerald-600"
+                              disabled={isRejected}
+                              className={`h-8 text-xs ${isRejected
+                                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                : "bg-emerald-600 hover:bg-emerald-700"
+                                }`}
                               onClick={() => setActiveSelectionTeam({ id: apt.id, side: side as any, teamName })}
                             >
-                              {count > 0 ? "Edit" : "Select"}
+                              {isRejected ? "Locked" : (count > 0 ? "Edit" : "Select")}
+                              {apt.status === "rejected" && (
+                                <span className="ml-2">❌</span>
+                              )}
+                              {apt.status === "accepted" && (
+                                <span className="ml-2">✅</span>
+                              )}
                             </Button>
                           </div>
                         );
@@ -731,23 +610,24 @@ export const RefereeDashboard: React.FC = () => {
                         </div>
                       </div>
                       <Button
-                        className={`w-full font-bold transition-all ${apt.responses?.[currentUser.uid] === "rejected"
-                          ? "bg-red-500 cursor-not-allowed"
+                        className={`w-full font-bold transition-all ${apt.responses?.[user?.uid] === "rejected"
+                          ? "bg-red-500 hover:bg-red-500 cursor-not-allowed opacity-100"
                           : "bg-emerald-600 hover:bg-emerald-700"
                           }`}
                         disabled={
-                          apt.responses?.[currentUser.uid] === "rejected" ||
+                          apt.responses?.[user?.uid] === "rejected" ||
                           !canSubmitResult(apt)
                         }
                         onClick={() => {
-                          if (apt.responses?.[currentUser.uid] !== "rejected") {
+                          if (apt.responses?.[user?.uid] !== "rejected") {
                             handleSubmitResult(apt);
                           }
                         }}
                       >
-                        {apt.responses?.[currentUser.uid] === "rejected"
-                          ? "APPOINTMENT REJECTED"
-                          : "SUBMIT RESULT"}
+                        {apt.responses?.[user?.uid] === "rejected"
+                          ? "MATCH REJECTED / NOT ACCEPTED"
+                          : "SUBMIT RESULT"
+                        }
                       </Button>
                     </div>
                   </div>

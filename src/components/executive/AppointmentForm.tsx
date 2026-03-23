@@ -145,6 +145,7 @@ export const AppointmentForm: React.FC = () => {
         game: formData.game,
         isSchoolGame: formData.isSchoolGame,
         appointedBy,
+        status: "pending",
         createdBy: user?.email || "unknown",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

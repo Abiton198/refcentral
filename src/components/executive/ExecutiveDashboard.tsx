@@ -85,6 +85,7 @@ interface Appointment {
   auditTrail?: { action: string; by: string; at: any }[];
   reportSubmitted?: boolean;
   reportSubmittedBy?: string;
+  rejectionReason?: string;
   reportReviewed?: boolean;
   reportReviewedBy?: string;
   reportReviewedAt?: any;
@@ -258,6 +259,7 @@ export const ExecutiveDashboard: React.FC = () => {
     const pending = appointments.filter((a) => a.status === "pending").length;
     const accepted = appointments.filter((a) => a.status === "accepted").length;
     const rejected = appointments.filter((a) => a.status === "rejected").length;
+    const rejectionReason = appointments.filter((a) => a.status === "rejected").map((a) => a.rejectionReason);
 
     return {
       total: appointments.length,
@@ -266,6 +268,7 @@ export const ExecutiveDashboard: React.FC = () => {
       pending,
       accepted,
       rejected,
+      rejectionReason,
       acceptanceRate: appointments.length > 0 ? Math.round((accepted / appointments.length) * 100) : 0,
     };
   }, [appointments]);
@@ -367,6 +370,10 @@ export const ExecutiveDashboard: React.FC = () => {
     const hasRefReport = refereeReports.has(apt.id);
     const isReviewed = apt.reportReviewed;
 
+    // reason
+    const rejectionReason = apt.rejectionReason;
+
+
     // Helper for badge colors (static, no hooks used here)
     const responseColor: any = {
       accepted: "bg-emerald-100 text-emerald-700 border-emerald-200",
@@ -379,6 +386,8 @@ export const ExecutiveDashboard: React.FC = () => {
     const refereeResponse = (refereeId && apt.responses?.[refereeId])
       ? apt.responses[refereeId]
       : (apt.responses as any)?.referee?.status || apt.status || "pending";
+
+
 
     return (
       <div className="flex flex-col sm:flex-row justify-between gap-4 p-1">
@@ -573,6 +582,7 @@ export const ExecutiveDashboard: React.FC = () => {
                             ></div>
                           </div>
                           <span className="text-sm font-medium">{stats.rejected}</span>
+                          {/* <span className="text-sm font-medium">{stats.rejectionReason}</span> */}
                         </div>
                       </div>
                     </div>
@@ -711,9 +721,19 @@ export const ExecutiveDashboard: React.FC = () => {
                     <div className="space-y-4">
                       {filteredAppointments.map((apt) => {
                         const isPast = !isAfter(parseISO(apt.date), new Date());
+                        const isConfirmed = apt.status === "accepted";
+                        const isRejected = apt.status === "rejected";
+                        const isPending = apt.status === "pending";
+
                         return (
                           <Card key={apt.id} className="p-5 hover:shadow-md transition">
                             {renderAppointmentCard(apt, true, isPast)}
+
+                            {isRejected && (
+                              <div className="mt-4">
+                                <p className="text-sm text-gray-500">Rejection Reason: {apt.rejectionReason}</p>
+                              </div>
+                            )}
                           </Card>
                         );
                       })}
@@ -812,6 +832,7 @@ export const ExecutiveDashboard: React.FC = () => {
                         <div className="flex justify-between">
                           <span>Rejected</span>
                           <span className="font-medium">{stats.rejected}</span>
+                          {/* <p className="text-xs text-gray-500 bg-red-500">{stats.rejectionReason}</p> */}
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-1.5">
                           <div className="bg-red-500 h-1.5 rounded-full" style={{ width: `${stats.rejected / Math.max(stats.total, 1) * 100}%` }}></div>
@@ -940,6 +961,7 @@ export const ExecutiveDashboard: React.FC = () => {
                           <span className="text-xs text-gray-500 ml-2">
                             {apt.date} @ {apt.venue}
                           </span>
+
                         </div>
                       </SelectItem>
                     ))}
