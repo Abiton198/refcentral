@@ -181,7 +181,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 action: "Match Report Submitted",
                 by: refereeName,
                 at: now,
-              }),
+                        }),
             }).catch(console.error);
 
             setAppointments(prev => prev.map(apt =>

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, writeBatch } from "firebase/firestore";
 import { toast } from "@/components/ui/use-toast";
 
 interface RefereeRegistrationFormProps {
@@ -27,42 +27,109 @@ export const RefereeRegistrationForm: React.FC<RefereeRegistrationFormProps> = (
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (loading) return;
+
+    if (!user) {
+      toast({
+        title: "Not signed in",
+        description: "Your session was lost. Please sign in again and retry.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLoading(true);
 
+    // Kept outside the try so the catch block can log what was already on file.
+    let existing: Record<string, unknown> = {};
+
     try {
+      const userRef = doc(db, "users", user.uid);
+      const refereeRef = doc(db, "referees", user.uid);
+
+      const [userSnap, refereeSnap] = await Promise.all([
+        getDoc(userRef),
+        getDoc(refereeRef),
+      ]);
+
+      const pick = (d: any) =>
+        d ? { role: d.role, approved: d.approved, status: d.status } : null;
+      existing = {
+        users: pick(userSnap.exists() ? userSnap.data() : null),
+        referees: pick(refereeSnap.exists() ? refereeSnap.data() : null),
+      };
+
+      // Roles can only be set once. Don't touch another role's account.
+      const existingRole = userSnap.exists() ? userSnap.data().role : null;
+      if (existingRole && existingRole !== "referee") {
+        toast({
+          title: "Account already registered",
+          description: `This Google account is already registered as ${existingRole}. Use a different account.`,
+          variant: "destructive",
+        });
+        return;
+      }
+
       const finalNationality =
         nationality === "Other" ? otherNationality : nationality;
       const finalBank = bankName === "Other" ? otherBank : bankName;
 
-      const finalData = {
-        ...formData,
-        nationality: finalNationality,
-        bankName: finalBank,
+      // Profile fields: safe to write on create or update.
+      // Firestore rejects undefined values, so drop them.
+      const profile = Object.fromEntries(
+        Object.entries({
+          ...formData,
+          nationality: finalNationality,
+          bankName: finalBank,
+          email: user.email,
+          displayName:
+            user.displayName || `${formData.firstName} ${formData.surname}`,
+          lastEdited: serverTimestamp(),
+        }).filter(([, v]) => v !== undefined)
+      );
+
+      // Protected fields: sent only when a doc is first created, because the
+      // security rules block changing them afterwards.
+      const protectedFields = {
+        uid: user.uid,
+        role: "referee",
         approved: false,
         status: "pending",
-        role: "referee",
-        uid: user.uid,
-        email: user.email,
-        displayName: user.displayName || `${formData.firstName} ${formData.surname}`,
         createdAt: serverTimestamp(),
-        lastEdited: serverTimestamp(),
       };
 
-      // Save under both users & referees collections
-      await setDoc(doc(db, "users", user.uid), finalData, { merge: true });
-      await setDoc(doc(db, "referees", user.uid), finalData, { merge: true });
+      const usersPayload = !userSnap.exists()
+        ? { ...profile, ...protectedFields }
+        : existingRole
+          ? profile // already has a role: profile fields only
+          : { ...profile, role: "referee" }; // legacy doc with no role yet
+
+      const refereesPayload = refereeSnap.exists()
+        ? profile
+        : { ...profile, ...protectedFields };
+
+      // One atomic commit: either both documents are saved or neither is.
+      const batch = writeBatch(db);
+      batch.set(userRef, usersPayload, { merge: true });
+      batch.set(refereeRef, refereesPayload, { merge: true });
+      await batch.commit();
 
       toast({
         title: "✅ Registration Submitted",
         description: "Awaiting executive approval.",
       });
       onComplete();
-    } catch (error) {
-      console.error("Error submitting referee registration:", error);
+    } catch (error: any) {
+      console.error(
+        "Referee registration failed:",
+        error?.code,
+        error?.message,
+        "Existing docs (role/approved/status):",
+        existing
+      );
       toast({
-        title: "Error",
-        description: "Failed to submit registration.",
+        title: "Registration failed",
+        description: `${error?.code || "error"}: ${error?.message || "Unknown error"}`,
         variant: "destructive",
       });
     } finally {

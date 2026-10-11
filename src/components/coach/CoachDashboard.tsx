@@ -35,6 +35,8 @@ interface Report {
   reviewedAt?: any;
   venue?: string;
   referee?: string;
+  homeTeamId?: string;
+  awayTeamId?: string;
 }
 
 interface Appointment {
@@ -53,6 +55,8 @@ interface Appointment {
     timestamp: any;
   }>;
   referee?: string;
+  homeTeamId?: string;
+  awayTeamId?: string;
 }
 
 interface AuditEntry {
@@ -74,32 +78,64 @@ export const CoachDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [auditTrail, setAuditTrail] = useState<AuditEntry[]>([]);
   const [selectedApptId, setSelectedApptId] = useState<string | null>(null);
+  const [teamMemberships, setTeamMemberships] = useState<any[]>([]);
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({});
 
   const user = auth.currentUser;
   const coachName = user?.displayName || "Coach";
   const coachEmail = user?.email || "";
   const photoURL = user?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(coachName)}&background=10b981&color=fff`;
 
-  // === Load Profile (Full) ===
+  // === Load Profile and Role ===
   useEffect(() => {
     if (!user?.uid) return;
-    const unsub = onSnapshot(doc(db, "coaches", user.uid), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setProfile(data);
-        setEditData({
-          firstName: data.firstName || "",
-          surname: data.surname || "",
-          mobileNumber: data.mobileNumber || "",
-          city: data.city || "",
-          bankName: data.bankName || "",
-          accountNumber: data.accountNumber || "",
-          branch: data.branch || "",
-          approved: data.approved || false,
-        });
-      }
+
+    const unsubUser = onSnapshot(doc(db, "users", user.uid), (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      setProfile(data);
+      setEditData({
+        firstName: data.firstName || "",
+        surname: data.surname || "",
+        mobileNumber: data.mobileNumber || "",
+        city: data.city || "",
+        bankName: data.bankName || "",
+        accountNumber: data.accountNumber || "",
+        branch: data.branch || "",
+      });
       setLoading(false);
     });
+
+    return () => unsubUser();
+  }, [user?.uid]);
+
+  // === Load team memberships ===
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const q = query(
+      collection(db, "team_memberships"),
+      where("userId", "==", user.uid),
+      where("status", "==", "active")
+    );
+
+    const unsub = onSnapshot(q, async (snapshot) => {
+      const memberships = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((m: any) => m.role === "coach");
+
+      setTeamMemberships(memberships);
+
+      const names: Record<string, string> = {};
+      await Promise.all(
+        memberships.map(async (membership: any) => {
+          if (!membership.teamId) return;
+          const teamSnap = await getDoc(doc(db, "teams", membership.teamId));
+          if (teamSnap.exists()) names[membership.teamId] = teamSnap.data().name || membership.teamId;
+        })
+      );
+      setTeamNames(names);
+    });
+
     return () => unsub();
   }, [user?.uid]);
 
@@ -123,26 +159,64 @@ export const CoachDashboard: React.FC = () => {
     return () => unsub();
   }, [coachEmail]);
 
-  // === Load Appointments from `appointments` collection (aligned with Executive) ===
+  // === Load appointments for teams where this user is a Coach ===
+  // The backend now treats Coach as a team-scoped membership.
+  // Do not rely on the old appointment.coachId field.
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.uid || teamMemberships.length === 0) {
+      setAppointments([]);
+      return;
+    }
 
-    const q = query(
-      collection(db, "appointments"),
-      where("coachId", "==", user.uid)
-    );
+    const unsubscribers: (() => void)[] = [];
+    const appointmentMap = new Map<string, Appointment>();
 
-    const unsub = onSnapshot(q, (snapshot) => {
-      const appts = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Appointment[];
+    const refresh = () => {
+      setAppointments(Array.from(appointmentMap.values()));
+    };
 
-      setAppointments(appts);
+    teamMemberships.forEach((membership: any) => {
+      const teamId = membership.teamId;
+      if (!teamId) return;
+
+      const homeQuery = query(
+        collection(db, "appointments"),
+        where("homeTeamId", "==", teamId)
+      );
+
+      const awayQuery = query(
+        collection(db, "appointments"),
+        where("awayTeamId", "==", teamId)
+      );
+
+      [homeQuery, awayQuery].forEach((q) => {
+        const unsub = onSnapshot(q, (snapshot) => {
+          snapshot.docs.forEach((d) => {
+            const data: any = d.data();
+            appointmentMap.set(d.id, {
+              id: d.id,
+              homeTeam: data.homeTeam || "",
+              awayTeam: data.awayTeam || "",
+              date: data.matchDate || data.date || "",
+              time: data.matchTime || data.time || "",
+              venue: data.venue || "",
+              appointedBy: data.createdByUid || "",
+              matchId: d.id,
+              createdAt: data.createdAt,
+              auditTrail: data.auditTrail || [],
+              referee: data.refereeName || "",
+              homeTeamId: data.homeTeamId,
+              awayTeamId: data.awayTeamId,
+            });
+          });
+          refresh();
+        });
+        unsubscribers.push(unsub);
+      });
     });
 
-    return () => unsub();
-  }, [user?.uid]);
+    return () => unsubscribers.forEach((unsub) => unsub());
+  }, [user?.uid, teamMemberships]);
 
   // === Open Report Form ===
   const openReportForm = (appt: Appointment) => {
@@ -187,8 +261,8 @@ export const CoachDashboard: React.FC = () => {
   const handleSaveProfile = async () => {
     if (!user?.uid) return;
     try {
-      await updateDoc(doc(db, "coaches", user.uid), editData);
       await updateDoc(doc(db, "users", user.uid), {
+        ...editData,
         displayName: `${editData.firstName} ${editData.surname}`.trim(),
       });
       setEditing(false);
@@ -227,7 +301,7 @@ export const CoachDashboard: React.FC = () => {
           <div className="flex items-center gap-4">
             <Avatar src={photoURL} size="lg" />
             <div>
-              <h2 className="text-xl font-bold text-gray-900">{coachName}</h2>
+              <h2 className="text-xl font-bold text-gray-900">{coachName}</h2>\n              <Badge variant="emerald">Coach</Badge>
               <p className="text-sm text-gray-600">{coachEmail}</p>
             </div>
           </div>
@@ -266,10 +340,10 @@ export const CoachDashboard: React.FC = () => {
         {/* APPOINTMENTS TAB */}
         {activeTab === "appointments" && (
           <div className="space-y-6">
-            <h3 className="text-2xl font-bold">Your Match Appointments</h3>
+            <h3 className="text-2xl font-bold">Your Team Fixtures</h3>
             {appointments.length === 0 ? (
               <Card className="p-8 text-center">
-                <p className="text-gray-500">No appointments yet. Check back after the executive assigns you.</p>
+                <p className="text-gray-500">No team fixtures yet. Your Executive must add you as a Coach to a team before team fixtures appear here.</p>
               </Card>
             ) : (
               <div className="space-y-4">
@@ -287,10 +361,10 @@ export const CoachDashboard: React.FC = () => {
                           {appt.date} • {appt.time} • {appt.venue}
                         </p>
                         <p className="text-sm text-gray-700 mt-1">
-                          <strong>Referee:</strong> {appt.referee || "—"}
+                          <strong>Referee:</strong> {appt.referee || "Not assigned yet"}
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
-                          Appointed by: <span className="font-medium">{appt.appointedBy}</span>
+                          Team: <span className="font-medium">{teamNames[teamMemberships.find((m: any) => m.teamId === (appt.homeTeamId || appt.awayTeamId))?.teamId] || "—"}</span>
                         </p>
                       </div>
                       <div className="flex flex-col gap-2 items-end">
@@ -300,7 +374,7 @@ export const CoachDashboard: React.FC = () => {
                           onClick={() => openReportForm(appt)}
                           className="bg-blue-600 hover:bg-blue-700 text-white"
                         >
-                          Submit Report
+                          Team Match Report
                         </Button>
                       </div>
                     </div>
