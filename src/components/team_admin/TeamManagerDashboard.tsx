@@ -141,7 +141,7 @@ const emptyPlayer: PlayerForm = {
 // You can override this using VITE_API_BASE_URL in your frontend .env file.
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ||
-  "https://refcentral.abitonp.workers.dev"
+  "https://refcentral-backend-wpzq.onrender.com"
 ).replace(/\/$/, "");
 
 /**
