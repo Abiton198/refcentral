@@ -28,6 +28,9 @@ import { ResultsView } from "./ResultsView";
 import { CoachManagement } from "./CoachManagement";
 import { RefereeManagement } from "./RefereeManagement";
 import { TeamRegistrationForm } from "./TeamRegistrationForm";
+import TeamManagerManagement, {
+  usePendingTeamManagerCount,
+} from "../team_admin/TeamManagerManagement";
 import { ReportsTab } from "./ReportsTab";
 import { format, isAfter, parseISO } from "date-fns";
 import {
@@ -57,6 +60,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CoachingReportUnified } from "../coach/CoachingReportUnified";
 import { MatchCardsView } from "./MatchCardsView";
 import { StatusBadge } from "./StatusBadge";
+import TeamManagerDashboard from "../team_admin/TeamManagerDashboard";
 
 const formatTimestamp = (ts: any): Date => {
   if (!ts) return new Date();
@@ -100,7 +104,7 @@ export const ExecutiveDashboard: React.FC = () => {
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
   const [activeTab, setActiveTab] = useState<
-    "overview" | "appointments" | "all-appointments" | "results" | "reports" | "coaches" | "referees" | "teams" | "matchcards"
+    "overview" | "appointments" | "all-appointments" | "results" | "reports" | "coaches" | "referees" | "teams" | "matchcards" | "teammanagers"
   >("overview");
 
   const [showRefForm, setShowRefForm] = useState(false);
@@ -120,6 +124,9 @@ export const ExecutiveDashboard: React.FC = () => {
 
   const currentUser = getAuth().currentUser;
   const currentUserName = currentUser?.displayName || currentUser?.email?.split("@")[0] || "Executive";
+
+  // Live count of team managers waiting for approval (badge + overview alert)
+  const pendingTeamManagers = usePendingTeamManagerCount();
 
   // 1. Listen to appointments
   useEffect(() => {
@@ -181,7 +188,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 action: "Match Report Submitted",
                 by: refereeName,
                 at: now,
-                        }),
+              }),
             }).catch(console.error);
 
             setAppointments(prev => prev.map(apt =>
@@ -470,6 +477,22 @@ export const ExecutiveDashboard: React.FC = () => {
     );
   };
 
+  // Shown on the overview tabs when team managers are waiting for approval
+  const renderPendingTeamManagersAlert = (compact = false) =>
+    pendingTeamManagers > 0 ? (
+      <Card
+        className={`border-amber-300 bg-amber-50 flex items-center justify-between gap-3 ${compact ? "p-3" : "p-4"}`}
+      >
+        <div className={`flex items-center gap-2 text-amber-800 ${compact ? "text-xs" : "text-sm"}`}>
+          <AlertCircle className={compact ? "w-4 h-4" : "w-5 h-5"} />
+          {pendingTeamManagers} team manager{pendingTeamManagers > 1 ? "s" : ""} awaiting approval
+        </div>
+        <Button size="sm" onClick={() => setActiveTab("teammanagers")}>
+          Review
+        </Button>
+      </Card>
+    ) : null;
+
 
   return (
     <>
@@ -498,7 +521,7 @@ export const ExecutiveDashboard: React.FC = () => {
           {/* Desktop Tabs */}
           <div className="hidden sm:block">
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
-              <TabsList className="grid grid-cols-4 lg:grid-cols-8 gap-1 p-1 bg-white/80 backdrop-blur rounded-xl shadow-sm">
+              <TabsList className="grid grid-cols-5 lg:grid-cols-10 gap-1 p-1 bg-white/80 backdrop-blur rounded-xl shadow-sm">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="appointments">Current</TabsTrigger>
                 <TabsTrigger value="all-appointments">All</TabsTrigger>
@@ -508,10 +531,20 @@ export const ExecutiveDashboard: React.FC = () => {
                 <TabsTrigger value="referees">Referees</TabsTrigger>
                 <TabsTrigger value="matchcards">Match Cards</TabsTrigger>
                 <TabsTrigger value="teams">Teams</TabsTrigger>
+                <TabsTrigger value="teammanagers">
+                  Team Mgrs
+                  {pendingTeamManagers > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
+                      {pendingTeamManagers}
+                    </span>
+                  )}
+                </TabsTrigger>
               </TabsList>
 
               {/* OVERVIEW */}
               <TabsContent value="overview" className="space-y-6">
+                {renderPendingTeamManagersAlert()}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <Card className="p-5 bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
                     <div className="flex items-center justify-between">
@@ -748,6 +781,7 @@ export const ExecutiveDashboard: React.FC = () => {
               <TabsContent value="referees"><RefereeManagement /></TabsContent>
               <TabsContent value="teams"><TeamRegistrationForm /></TabsContent>
               <TabsContent value="matchcards"><MatchCardsView /></TabsContent>
+              <TabsContent value="teammanagers"><TeamManagerManagement /></TabsContent>
             </Tabs>
           </div>
 
@@ -764,6 +798,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 { value: "referees", label: "Referees" },
                 { value: "matchcards", label: "Match Cards" },
                 { value: "teams", label: "Teams" },
+                { value: "teammanagers", label: "Team Managers" },
               ].map((tab) => (
                 <button
                   key={tab.value}
@@ -771,12 +806,17 @@ export const ExecutiveDashboard: React.FC = () => {
                     setActiveTab(tab.value as any);
                     setMobileMenuOpen(false);
                   }}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition ${activeTab === tab.value
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition flex items-center justify-between ${activeTab === tab.value
                     ? "bg-emerald-600 text-white"
                     : "text-gray-700 hover:bg-gray-100"
                     }`}
                 >
-                  {tab.label}
+                  <span>{tab.label}</span>
+                  {tab.value === "teammanagers" && pendingTeamManagers > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
+                      {pendingTeamManagers}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -786,6 +826,8 @@ export const ExecutiveDashboard: React.FC = () => {
           <div className="sm:hidden space-y-6">
             {activeTab === "overview" && (
               <>
+                {renderPendingTeamManagersAlert(true)}
+
                 <div className="grid grid-cols-2 gap-3">
                   <Card className="p-3 text-center bg-emerald-500 text-white">
                     <p className="text-xs">Total</p>
@@ -903,18 +945,17 @@ export const ExecutiveDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* Match Cards View */}
-            {["results", "reports", "coaches", "referees", "teams", "matchcards"].includes(activeTab)
-              && (
-                <div className="bg-white rounded-xl p-4 shadow">
-                  {activeTab === "results" && <ResultsView />}
-                  {activeTab === "reports" && <ReportsTab />}
-                  {activeTab === "coaches" && <CoachManagement />}
-                  {activeTab === "referees" && <RefereeManagement />}
-                  {activeTab === "matchcards" && <MatchCardsView />}
-                  {activeTab === "teams" && <TeamRegistrationForm />}
-                </div>
-              )}
+            {["results", "reports", "coaches", "referees", "teams", "teammanagers", "matchcards"].includes(activeTab) && (
+              <div className="bg-white rounded-xl p-4 shadow">
+                {activeTab === "results" && <ResultsView />}
+                {activeTab === "reports" && <ReportsTab />}
+                {activeTab === "coaches" && <CoachManagement />}
+                {activeTab === "referees" && <RefereeManagement />}
+                {activeTab === "matchcards" && <MatchCardsView />}
+                {activeTab === "teams" && <TeamRegistrationForm />}
+                {activeTab === "teammanagers" && <TeamManagerManagement />}
+              </div>
+            )}
           </div>
 
         </div>

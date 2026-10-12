@@ -5,14 +5,11 @@ import { Button } from "../ui/Button";
 import { Card, StatCard } from "../ui/Card";
 import { auth, db } from "../../lib/firebase";
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDocs,
   onSnapshot,
   query,
-  updateDoc,
   where,
 } from "firebase/firestore";
 import { signOut } from "firebase/auth";
@@ -33,41 +30,31 @@ import {
  *
  * ROLE MODEL
  * ----------
- * A Team Manager is NOT a global administrator.
- *
- * Their access comes from:
+ * Team Managers have team-scoped access.
  *
  * users/{uid}
- *      role: "team_manager"
+ *   role: "team_manager"
  *
  * team_memberships/{membershipId}
- *      userId: uid
- *      teamId: teamId
- *      role: "team_manager"
- *      status: "active"
+ *   userId: uid
+ *   teamId: teamId
+ *   role: "team_manager"
+ *   status: "active"
  *
- * The dashboard therefore NEVER assumes that the user owns a team and
- * NEVER trusts a teamId supplied by the browser as proof of permission.
- *
- * The membership collection is the source of team-scoped access.
- *
- * RESPONSIBILITIES
- * ----------------
- * Team Manager can:
- *   - View teams they manage
- *   - View/register/update their team's players
- *   - Manage player jersey/position/status
- *   - View fixtures involving their team
- *   - Prepare the team for the later teamsheet workflow
- *
- * Executive responsibilities remain outside this dashboard:
+ * Executive responsibilities:
  *   - Create teams
  *   - Create fixtures
- *   - Create team memberships
+ *   - Assign team memberships
  *   - Assign referees
  *
- * Coaches have a separate dashboard and can use the same team membership
- * relationship with role = "coach".
+ * Team Manager responsibilities:
+ *   - View assigned teams
+ *   - Register and update players
+ *   - Upload player photographs
+ *   - Deactivate players
+ *   - View fixtures involving their teams
+ *
+ * Player records and photographs are handled by the protected backend API.
  */
 
 type Tab = "overview" | "players" | "fixtures" | "profile";
@@ -130,7 +117,17 @@ interface UserProfile {
   photoURL?: string;
 }
 
-const emptyPlayer = {
+interface PlayerForm {
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  dateOfBirth: string;
+  gender: string;
+  position: string;
+  jerseyNumber: string | number;
+}
+
+const emptyPlayer: PlayerForm = {
   firstName: "",
   middleName: "",
   lastName: "",
@@ -139,6 +136,91 @@ const emptyPlayer = {
   position: "",
   jerseyNumber: "",
 };
+
+// Cloudflare Worker API base URL.
+// You can override this using VITE_API_BASE_URL in your frontend .env file.
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://refcentral.abitonp.workers.dev"
+).replace(/\/$/, "");
+
+/**
+ * Makes an authenticated request to the RefCentral backend.
+ *
+ * Firebase Authentication supplies an ID token.
+ * The backend must validate this token and enforce authorization.
+ */
+async function authenticatedApiFetch(
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const currentUser = auth.currentUser;
+
+  if (!currentUser) {
+    throw new Error("Your session has expired. Please sign in again.");
+  }
+
+  const token = await currentUser.getIdToken();
+
+  const headers = new Headers(init.headers || {});
+
+  headers.set("Authorization", `Bearer ${token}`);
+
+  // Do not manually set Content-Type for FormData.
+  // The browser needs to add the multipart boundary for photo uploads.
+  if (
+    init.body &&
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+
+    try {
+      const body = await response.json();
+      message = body.detail || body.message || message;
+    } catch {
+      // The response did not contain JSON.
+    }
+
+    throw new Error(message);
+  }
+
+  return response;
+}
+
+/**
+ * Converts a player response from the Python API's snake_case
+ * fields into the frontend's camelCase player model.
+ */
+function mapApiPlayer(raw: any): Player {
+  return {
+    id: raw.player_id ?? raw.id,
+    teamId: raw.team_id ?? raw.teamId,
+    firstName: raw.first_name ?? raw.firstName ?? "",
+    middleName: raw.middle_name ?? raw.middleName ?? "",
+    lastName: raw.last_name ?? raw.lastName ?? "",
+    dateOfBirth:
+      typeof (raw.date_of_birth ?? raw.dateOfBirth) === "string"
+        ? raw.date_of_birth ?? raw.dateOfBirth
+        : "",
+    gender: raw.gender || "",
+    position: raw.position || "",
+    jerseyNumber: raw.jersey_number ?? raw.jerseyNumber ?? undefined,
+    photoUrl: raw.photo_url ?? raw.photoUrl ?? undefined,
+    status: raw.status || "active",
+    registrationStatus:
+      raw.registration_status ?? raw.registrationStatus ?? "registered",
+  };
+}
 
 export const TeamManagerDashboard: React.FC = () => {
   const user = auth.currentUser;
@@ -152,15 +234,24 @@ export const TeamManagerDashboard: React.FC = () => {
 
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
-  const [playerForm, setPlayerForm] = useState<any>(emptyPlayer);
+  const [playerForm, setPlayerForm] =
+    useState<PlayerForm>({ ...emptyPlayer });
+
   const [showPlayerForm, setShowPlayerForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+
   const uid = user?.uid || "";
+
   const displayName =
     profile?.displayName || user?.displayName || "Team Manager";
+
   const email = profile?.email || user?.email || "";
+
   const photoURL =
     profile?.photoURL ||
     user?.photoURL ||
@@ -168,8 +259,18 @@ export const TeamManagerDashboard: React.FC = () => {
       displayName
     )}&background=2563eb&color=fff`;
 
+  // Team IDs for which this user has an active Team Manager membership.
   const managedTeamIds = useMemo(
-    () => new Set(memberships.map((membership) => membership.teamId)),
+    () =>
+      new Set(
+        memberships
+          .filter(
+            (membership) =>
+              membership.role === "team_manager" &&
+              membership.status === "active"
+          )
+          .map((membership) => membership.teamId)
+      ),
     [memberships]
   );
 
@@ -196,27 +297,43 @@ export const TeamManagerDashboard: React.FC = () => {
   );
 
   // ---------------------------------------------------------
-  // Load the manager's global user profile.
+  // Load the manager's user profile.
   // ---------------------------------------------------------
   useEffect(() => {
-    if (!uid) return;
+    if (!uid) {
+      setProfile(null);
+      return;
+    }
 
-    const unsubscribe = onSnapshot(doc(db, "users", uid), (snapshot) => {
-      if (snapshot.exists()) {
-        setProfile(snapshot.data() as UserProfile);
+    const unsubscribe = onSnapshot(
+      doc(db, "users", uid),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setProfile(snapshot.data() as UserProfile);
+        }
+      },
+      (error) => {
+        console.error("Unable to load user profile:", error);
       }
-    });
+    );
 
     return () => unsubscribe();
   }, [uid]);
 
   // ---------------------------------------------------------
-  // Load ONLY active team-manager memberships for this user.
+  // Load active Team Manager memberships.
   //
-  // This is the key authorization relationship for the dashboard.
+  // This frontend query is used to display assigned teams.
+  // The backend must independently verify authorization on every
+  // player or photograph request.
   // ---------------------------------------------------------
   useEffect(() => {
-    if (!uid) return;
+    if (!uid) {
+      setMemberships([]);
+      setSelectedTeamId("");
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
 
@@ -237,61 +354,85 @@ export const TeamManagerDashboard: React.FC = () => {
 
         setMemberships(data);
 
-        if (data.length > 0 && !selectedTeamId) {
-          setSelectedTeamId(data[0].teamId);
-        }
+        setSelectedTeamId((currentTeamId) => {
+          if (
+            currentTeamId &&
+            data.some((membership) => membership.teamId === currentTeamId)
+          ) {
+            return currentTeamId;
+          }
 
-        if (data.length === 0) {
-          setSelectedTeamId("");
-        }
+          return data[0]?.teamId || "";
+        });
 
         setLoading(false);
       },
-      () => setLoading(false)
+      (error) => {
+        console.error("Unable to load team memberships:", error);
+        setMemberships([]);
+        setSelectedTeamId("");
+        setLoading(false);
+      }
     );
 
     return () => unsubscribe();
-  }, [uid, selectedTeamId]);
+  }, [uid]);
 
   // ---------------------------------------------------------
-  // Load the teams belonging to the manager's active memberships.
+  // Load the teams associated with active memberships.
   // ---------------------------------------------------------
   useEffect(() => {
-    if (!memberships.length) {
-      setTeams([]);
-      return;
-    }
-
     let cancelled = false;
 
     const loadTeams = async () => {
-      const results: Team[] = [];
-
-      for (const membership of memberships) {
-        const snapshot = await getDocs(
-          query(collection(db, "teams"), where("__name__", "==", membership.teamId))
-        );
-
-        snapshot.forEach((item) => {
-          results.push({
-            id: item.id,
-            ...item.data(),
-          } as Team);
-        });
+      if (!memberships.length) {
+        setTeams([]);
+        return;
       }
 
-      if (!cancelled) {
-        setTeams(results);
-        if (
-          results.length > 0 &&
-          !results.some((team) => team.id === selectedTeamId)
-        ) {
-          setSelectedTeamId(results[0].id);
+      try {
+        const results = await Promise.all(
+          memberships.map(async (membership) => {
+            const snapshot = await getDocs(
+              query(
+                collection(db, "teams"),
+                where("__name__", "==", membership.teamId)
+              )
+            );
+
+            return snapshot.docs.map((item) => ({
+              id: item.id,
+              ...item.data(),
+            })) as Team[];
+          })
+        );
+
+        const allTeams = results.flat();
+
+        if (!cancelled) {
+          setTeams(allTeams);
+
+          setSelectedTeamId((currentTeamId) => {
+            if (
+              currentTeamId &&
+              allTeams.some((team) => team.id === currentTeamId)
+            ) {
+              return currentTeamId;
+            }
+
+            return allTeams[0]?.id || "";
+          });
+        }
+      } catch (error) {
+        console.error("Unable to load teams:", error);
+
+        if (!cancelled) {
+          setTeams([]);
         }
       }
     };
 
-    loadTeams();
+    void loadTeams();
 
     return () => {
       cancelled = true;
@@ -299,38 +440,130 @@ export const TeamManagerDashboard: React.FC = () => {
   }, [memberships]);
 
   // ---------------------------------------------------------
-  // Load players belonging ONLY to teams managed by this user.
-  //
-  // The backend must enforce this same rule. This frontend filter
-  // is for UI correctness, not security.
+  // Load player records through the protected backend API.
   // ---------------------------------------------------------
   useEffect(() => {
-    if (!managedTeamIds.size) {
-      setPlayers([]);
-      return;
-    }
+    let cancelled = false;
 
-    const playerQuery = query(collection(db, "players"));
+    const loadPlayers = async () => {
+      if (!managedTeamIds.size) {
+        setPlayers([]);
+        return;
+      }
 
-    const unsubscribe = onSnapshot(playerQuery, (snapshot) => {
-      const data = snapshot.docs
-        .map((item) => ({
-          id: item.id,
-          ...item.data(),
-        }))
-        .filter((player: any) => managedTeamIds.has(player.teamId)) as Player[];
+      try {
+        const results = await Promise.all(
+          Array.from(managedTeamIds).map(async (teamId) => {
+            const response = await authenticatedApiFetch(
+              `/api/teams/${encodeURIComponent(teamId)}/players`
+            );
 
-      setPlayers(data);
-    });
+            const rows = await response.json();
 
-    return () => unsubscribe();
+            return (rows as any[]).map((row) => {
+              const player = mapApiPlayer(row);
+
+              // Some APIs omit team_id from individual player records.
+              return {
+                ...player,
+                teamId: player.teamId || teamId,
+              };
+            });
+          })
+        );
+
+        if (!cancelled) {
+          setPlayers(results.flat());
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          setPlayers([]);
+
+          console.error(
+            "Unable to load team players from RefCentral API:",
+            error
+          );
+
+          alert(
+            error?.message ||
+              "Unable to load players from the RefCentral backend."
+          );
+        }
+      }
+    };
+
+    void loadPlayers();
+
+    return () => {
+      cancelled = true;
+    };
   }, [managedTeamIds]);
 
   // ---------------------------------------------------------
-  // Load fixtures.
+  // Fetch private player photographs.
   //
-  // The new appointment model stores homeTeamId/awayTeamId.
-  // We therefore do NOT query coachId or team-manager UID.
+  // A protected photo URL cannot normally be used directly as an
+  // image src because the browser cannot attach our Firebase token.
+  // Fetch the image with authorization and create a temporary URL.
+  // ---------------------------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+    const createdUrls: string[] = [];
+
+    const loadPhotos = async () => {
+      const next: Record<string, string> = {};
+
+      await Promise.all(
+        players.map(async (player) => {
+          if (
+            !player.photoUrl ||
+            !player.teamId ||
+            !managedTeamIds.has(player.teamId)
+          ) {
+            return;
+          }
+
+          try {
+            const response = await authenticatedApiFetch(
+              `/api/teams/${encodeURIComponent(
+                player.teamId
+              )}/players/${encodeURIComponent(player.id)}/photo`
+            );
+
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+
+            createdUrls.push(objectUrl);
+            next[player.id] = objectUrl;
+          } catch (error) {
+            console.warn(
+              `Could not load photograph for player ${player.id}:`,
+              error
+            );
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setPhotoUrls((previous) => {
+          Object.values(previous).forEach((url) => URL.revokeObjectURL(url));
+          return next;
+        });
+      } else {
+        createdUrls.forEach((url) => URL.revokeObjectURL(url));
+      }
+    };
+
+    void loadPhotos();
+
+    return () => {
+      cancelled = true;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [players, managedTeamIds]);
+
+  // ---------------------------------------------------------
+  // Load fixtures involving the manager's teams.
   // ---------------------------------------------------------
   useEffect(() => {
     if (!managedTeamIds.size) {
@@ -353,12 +586,19 @@ export const TeamManagerDashboard: React.FC = () => {
           ) as Appointment[];
 
         setAppointments(data);
+      },
+      (error) => {
+        console.error("Unable to load fixtures:", error);
+        setAppointments([]);
       }
     );
 
     return () => unsubscribe();
   }, [managedTeamIds]);
 
+  // ---------------------------------------------------------
+  // Open a blank player registration form.
+  // ---------------------------------------------------------
   const openNewPlayer = () => {
     if (!selectedTeamId) {
       alert("Select a team before registering a player.");
@@ -367,17 +607,22 @@ export const TeamManagerDashboard: React.FC = () => {
 
     setSelectedPlayer(null);
     setPlayerForm({ ...emptyPlayer });
+    setPhotoFile(null);
+    setPhotoPreview("");
     setShowPlayerForm(true);
   };
 
+  // ---------------------------------------------------------
+  // Open the player edit form.
+  // ---------------------------------------------------------
   const openEditPlayer = (player: Player) => {
-    // Never allow editing a player outside the manager's team scope.
     if (!managedTeamIds.has(player.teamId)) {
       alert("You do not have permission to edit this player.");
       return;
     }
 
     setSelectedPlayer(player);
+
     setPlayerForm({
       firstName: player.firstName || "",
       middleName: player.middleName || "",
@@ -387,67 +632,179 @@ export const TeamManagerDashboard: React.FC = () => {
       position: player.position || "",
       jerseyNumber: player.jerseyNumber ?? "",
     });
+
+    setPhotoFile(null);
+    setPhotoPreview("");
     setShowPlayerForm(true);
   };
 
+  // ---------------------------------------------------------
+  // Save a new player or update an existing player.
+  //
+  // Player JSON is sent to the backend.
+  // A selected photograph is uploaded separately as multipart data.
+  // ---------------------------------------------------------
   const savePlayer = async () => {
-    if (!uid || !selectedTeamId) return;
+    const teamId = selectedPlayer?.teamId || selectedTeamId;
 
-    if (!playerForm.firstName.trim() || !playerForm.lastName.trim()) {
+    if (!uid || !teamId) {
+      alert("Your account or team selection is missing.");
+      return;
+    }
+
+    if (!managedTeamIds.has(teamId)) {
+      alert("You are not assigned to manage this team.");
+      return;
+    }
+
+    if (
+      !playerForm.firstName.trim() ||
+      !playerForm.lastName.trim()
+    ) {
       alert("First name and surname are required.");
+      return;
+    }
+
+    if (!playerForm.dateOfBirth) {
+      alert("Date of birth is required.");
+      return;
+    }
+
+    const jerseyNumber =
+      playerForm.jerseyNumber === "" ||
+      playerForm.jerseyNumber === null
+        ? null
+        : Number(playerForm.jerseyNumber);
+
+    if (
+      jerseyNumber !== null &&
+      (!Number.isInteger(jerseyNumber) ||
+        jerseyNumber < 1 ||
+        jerseyNumber > 99)
+    ) {
+      alert("Jersey number must be a whole number from 1 to 99.");
       return;
     }
 
     setSaving(true);
 
     try {
-      const data = {
-        firstName: playerForm.firstName.trim(),
-        middleName: playerForm.middleName.trim(),
-        lastName: playerForm.lastName.trim(),
-        dateOfBirth: playerForm.dateOfBirth,
+      const payload = {
+        first_name: playerForm.firstName.trim(),
+        middle_name: playerForm.middleName.trim(),
+        last_name: playerForm.lastName.trim(),
+        date_of_birth: playerForm.dateOfBirth,
         gender: playerForm.gender || null,
         position: playerForm.position || null,
-        jerseyNumber:
-          playerForm.jerseyNumber === ""
-            ? null
-            : Number(playerForm.jerseyNumber),
-        updatedAt: new Date(),
-        updatedBy: uid,
+        jersey_number: jerseyNumber,
       };
 
+      let savedPlayer: Player;
+
       if (selectedPlayer) {
-        // Confirm the player still belongs to a team the manager controls.
         if (!managedTeamIds.has(selectedPlayer.teamId)) {
-          throw new Error("You do not have permission to update this player.");
+          throw new Error(
+            "You do not have permission to update this player."
+          );
         }
 
-        await updateDoc(doc(db, "players", selectedPlayer.id), data);
+        const response = await authenticatedApiFetch(
+          `/api/teams/${encodeURIComponent(
+            selectedPlayer.teamId
+          )}/players/${encodeURIComponent(selectedPlayer.id)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          }
+        );
+
+        savedPlayer = mapApiPlayer(await response.json());
+
+        savedPlayer = {
+          ...savedPlayer,
+          teamId: savedPlayer.teamId || selectedPlayer.teamId,
+        };
       } else {
-        await addDoc(collection(db, "players"), {
-          ...data,
-          teamId: selectedTeamId,
-          photoUrl: null,
-          photoStoragePath: null,
-          status: "active",
-          registrationStatus: "registered",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          createdBy: uid,
-          updatedBy: uid,
-        });
+        const response = await authenticatedApiFetch(
+          `/api/teams/${encodeURIComponent(teamId)}/players`,
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          }
+        );
+
+        savedPlayer = mapApiPlayer(await response.json());
+
+        savedPlayer = {
+          ...savedPlayer,
+          teamId: savedPlayer.teamId || teamId,
+        };
       }
+
+      // Preserve the saved ID so a failed photograph upload does not
+      // accidentally create a duplicate player on the next attempt.
+      setSelectedPlayer(savedPlayer);
+
+      // Upload a photograph only after the player record exists.
+      if (photoFile) {
+        const formData = new FormData();
+        formData.append("file", photoFile);
+
+        await authenticatedApiFetch(
+          `/api/teams/${encodeURIComponent(
+            savedPlayer.teamId
+          )}/players/${encodeURIComponent(savedPlayer.id)}/photo`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+      }
+
+      // Reload this team's players from the backend.
+      const listResponse = await authenticatedApiFetch(
+        `/api/teams/${encodeURIComponent(savedPlayer.teamId)}/players`
+      );
+
+      const refreshedRows = (await listResponse.json()) as any[];
+
+      const refreshedPlayers = refreshedRows.map((row) => {
+        const player = mapApiPlayer(row);
+
+        return {
+          ...player,
+          teamId: player.teamId || savedPlayer.teamId,
+        };
+      });
+
+      setPlayers((current) => [
+        ...current.filter(
+          (player) => player.teamId !== savedPlayer.teamId
+        ),
+        ...refreshedPlayers,
+      ]);
 
       setShowPlayerForm(false);
       setSelectedPlayer(null);
       setPlayerForm({ ...emptyPlayer });
+      setPhotoFile(null);
+      setPhotoPreview("");
     } catch (error: any) {
-      alert(error?.message || "Unable to save player.");
+      console.error("Unable to save player:", error);
+
+      alert(
+        error?.message ||
+          "Unable to save player. Check the API URL and backend logs."
+      );
     } finally {
       setSaving(false);
     }
   };
 
+  // ---------------------------------------------------------
+  // Deactivate a player instead of permanently deleting the record.
+  // This helps preserve future teamsheet and match history.
+  // ---------------------------------------------------------
   const removePlayer = async (player: Player) => {
     if (!managedTeamIds.has(player.teamId)) {
       alert("You do not have permission to remove this player.");
@@ -455,24 +812,39 @@ export const TeamManagerDashboard: React.FC = () => {
     }
 
     const confirmed = window.confirm(
-      `Remove ${player.firstName} ${player.lastName} from the active player list?`
+      `Deactivate ${player.firstName} ${player.lastName}?`
     );
 
     if (!confirmed) return;
 
     try {
-      // Prefer deactivation over physical deletion because player history
-      // may later be referenced by teamsheets, reports and match verification.
-      await updateDoc(doc(db, "players", player.id), {
-        status: "inactive",
-        updatedAt: new Date(),
-        updatedBy: uid,
-      });
+      await authenticatedApiFetch(
+        `/api/teams/${encodeURIComponent(
+          player.teamId
+        )}/players/${encodeURIComponent(player.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: "inactive" }),
+        }
+      );
+
+      setPlayers((current) =>
+        current.map((item) =>
+          item.id === player.id
+            ? { ...item, status: "inactive" }
+            : item
+        )
+      );
     } catch (error: any) {
+      console.error("Unable to deactivate player:", error);
+
       alert(error?.message || "Unable to deactivate player.");
     }
   };
 
+  // ---------------------------------------------------------
+  // Sign out of Firebase Authentication.
+  // ---------------------------------------------------------
   const handleLogout = async () => {
     await signOut(auth);
     window.location.href = "/login";
@@ -483,29 +855,40 @@ export const TeamManagerDashboard: React.FC = () => {
   );
 
   const upcomingFixtures = teamAppointments
-    .filter((appointment) => appointment.status !== "cancelled")
+    .filter(
+      (appointment) =>
+        (appointment.status || "").toLowerCase() !== "cancelled"
+    )
     .sort((a, b) =>
       `${a.matchDate} ${a.matchTime}`.localeCompare(
         `${b.matchDate} ${b.matchTime}`
       )
     );
 
+  // ---------------------------------------------------------
+  // Dashboard interface.
+  // ---------------------------------------------------------
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4 md:p-6">
       <div className="max-w-7xl mx-auto space-y-6">
+
         {/* HEADER */}
         <Card className="p-6">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
             <div className="flex items-center gap-4">
               <Avatar src={photoURL} size="lg" />
+
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-2xl font-bold text-gray-900">
                     {displayName}
                   </h1>
+
                   <Badge variant="blue">Team Manager</Badge>
                 </div>
+
                 <p className="text-sm text-gray-600">{email}</p>
+
                 <p className="text-xs text-gray-500 mt-1">
                   Team-scoped management access
                 </p>
@@ -513,17 +896,17 @@ export const TeamManagerDashboard: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {(["overview", "players", "fixtures", "profile"] as Tab[]).map(
-                (tab) => (
-                  <Button
-                    key={tab}
-                    variant={activeTab === tab ? "default" : "outline"}
-                    onClick={() => setActiveTab(tab)}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </Button>
-                )
-              )}
+              {(
+                ["overview", "players", "fixtures", "profile"] as Tab[]
+              ).map((tab) => (
+                <Button
+                  key={tab}
+                  variant={activeTab === tab ? "default" : "outline"}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </Button>
+              ))}
 
               <Button
                 variant="outline"
@@ -542,13 +925,17 @@ export const TeamManagerDashboard: React.FC = () => {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <p className="text-sm text-gray-500">Managing team</p>
+
               <h2 className="text-xl font-bold text-gray-900">
                 {selectedTeam?.name || "No team assigned"}
               </h2>
+
               {selectedTeam && (
                 <p className="text-sm text-gray-600">
-                  {selectedTeam.homeGround || "No home ground"}{" "}
-                  {selectedTeam.league ? `• ${selectedTeam.league}` : ""}
+                  {selectedTeam.homeGround || "No home ground"}
+                  {selectedTeam.league
+                    ? ` • ${selectedTeam.league}`
+                    : ""}
                 </p>
               )}
             </div>
@@ -556,7 +943,9 @@ export const TeamManagerDashboard: React.FC = () => {
             {teams.length > 1 && (
               <select
                 value={selectedTeamId}
-                onChange={(event) => setSelectedTeamId(event.target.value)}
+                onChange={(event) =>
+                  setSelectedTeamId(event.target.value)
+                }
                 className="border rounded-lg px-4 py-2 bg-white"
               >
                 {teams.map((team) => (
@@ -569,6 +958,7 @@ export const TeamManagerDashboard: React.FC = () => {
           </div>
         </Card>
 
+        {/* LOADING AND NO-TEAM STATES */}
         {loading ? (
           <Card className="p-10 text-center text-gray-500">
             Loading your team access...
@@ -576,10 +966,15 @@ export const TeamManagerDashboard: React.FC = () => {
         ) : teams.length === 0 ? (
           <Card className="p-10 text-center">
             <ShieldCheck className="w-10 h-10 mx-auto mb-3 text-gray-400" />
-            <h3 className="font-bold text-lg">No team assigned yet</h3>
+
+            <h3 className="font-bold text-lg">
+              No team assigned yet
+            </h3>
+
             <p className="text-gray-500 mt-2">
-              Your Team Manager account is registered, but an Executive must
-              assign you to a team before you can manage players or fixtures.
+              Your Team Manager account is registered, but an Executive
+              must assign you to a team before you can manage players
+              or fixtures.
             </p>
           </Card>
         ) : (
@@ -594,18 +989,21 @@ export const TeamManagerDashboard: React.FC = () => {
                     icon="Users"
                     color="blue"
                   />
+
                   <StatCard
                     title="Active Players"
                     value={activePlayers.length}
                     icon="Users"
                     color="emerald"
                   />
+
                   <StatCard
                     title="Fixtures"
                     value={upcomingFixtures.length}
                     icon="Calendar"
                     color="amber"
                   />
+
                   <StatCard
                     title="Role"
                     value="Manager"
@@ -618,11 +1016,15 @@ export const TeamManagerDashboard: React.FC = () => {
                   <Card className="p-6">
                     <div className="flex items-center justify-between mb-4">
                       <div>
-                        <h3 className="text-xl font-bold">Player Management</h3>
+                        <h3 className="text-xl font-bold">
+                          Player Management
+                        </h3>
+
                         <p className="text-sm text-gray-500">
                           Register and maintain your team's player records.
                         </p>
                       </div>
+
                       <Users className="w-6 h-6 text-blue-600" />
                     </div>
 
@@ -635,10 +1037,12 @@ export const TeamManagerDashboard: React.FC = () => {
                     <div className="flex items-center justify-between mb-4">
                       <div>
                         <h3 className="text-xl font-bold">Fixtures</h3>
+
                         <p className="text-sm text-gray-500">
                           View fixtures created by the Executive.
                         </p>
                       </div>
+
                       <Calendar className="w-6 h-6 text-amber-600" />
                     </div>
 
@@ -649,24 +1053,30 @@ export const TeamManagerDashboard: React.FC = () => {
                 </div>
 
                 <Card className="p-6">
-                  <h3 className="text-xl font-bold mb-4">Your Management Scope</h3>
+                  <h3 className="text-xl font-bold mb-4">
+                    Your Management Scope
+                  </h3>
+
                   <div className="space-y-3 text-sm text-gray-700">
                     <p>
-                      <strong>Team Manager:</strong> You can manage players
-                      only for teams where an Executive has created an active
-                      Team Manager membership for you.
+                      <strong>Team Manager:</strong> You can manage
+                      players only for teams where an Executive has
+                      created an active Team Manager membership for you.
                     </p>
+
                     <p>
-                      <strong>Executive:</strong> Creates teams, fixtures,
-                      memberships and referee appointments.
+                      <strong>Executive:</strong> Creates teams,
+                      fixtures, memberships and referee appointments.
                     </p>
+
                     <p>
-                      <strong>Coach:</strong> Has separate team-scoped access
-                      for coaching and squad preparation.
+                      <strong>Coach:</strong> Has separate team-scoped
+                      access for coaching and squad preparation.
                     </p>
+
                     <p>
-                      <strong>Referee:</strong> Sees appointments assigned to
-                      them and handles matchday verification.
+                      <strong>Referee:</strong> Sees appointments assigned
+                      to them and handles matchday verification.
                     </p>
                   </div>
                 </Card>
@@ -679,13 +1089,17 @@ export const TeamManagerDashboard: React.FC = () => {
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-2xl font-bold">Team Players</h2>
+
                     <p className="text-sm text-gray-500">
                       {selectedTeam?.name} • {activePlayers.length} active
                       players
                     </p>
                   </div>
 
-                  <Button onClick={openNewPlayer} className="flex gap-2">
+                  <Button
+                    onClick={openNewPlayer}
+                    className="flex gap-2"
+                  >
                     <Plus className="w-4 h-4" />
                     Register Player
                   </Button>
@@ -694,7 +1108,11 @@ export const TeamManagerDashboard: React.FC = () => {
                 {activePlayers.length === 0 ? (
                   <Card className="p-10 text-center">
                     <Users className="w-10 h-10 mx-auto mb-3 text-gray-400" />
-                    <h3 className="font-bold">No players registered</h3>
+
+                    <h3 className="font-bold">
+                      No players registered
+                    </h3>
+
                     <p className="text-sm text-gray-500 mt-1">
                       Start by registering the players for this team.
                     </p>
@@ -707,13 +1125,14 @@ export const TeamManagerDashboard: React.FC = () => {
                           <div className="flex items-center gap-3">
                             <Avatar
                               src={
-                                player.photoUrl ||
+                                photoUrls[player.id] ||
                                 `https://ui-avatars.com/api/?name=${encodeURIComponent(
                                   `${player.firstName} ${player.lastName}`
-                                )}`
+                                )}&background=2563eb&color=fff`
                               }
                               size="md"
                             />
+
                             <div>
                               <h3 className="font-bold">
                                 {player.firstName}{" "}
@@ -722,26 +1141,32 @@ export const TeamManagerDashboard: React.FC = () => {
                                   : ""}
                                 {player.lastName}
                               </h3>
+
                               <p className="text-sm text-gray-500">
                                 {player.position || "Position not set"}
                               </p>
                             </div>
                           </div>
 
-                          {player.jerseyNumber && (
-                            <Badge variant="blue">#{player.jerseyNumber}</Badge>
+                          {player.jerseyNumber != null && (
+                            <Badge variant="blue">
+                              #{player.jerseyNumber}
+                            </Badge>
                           )}
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
                           <div>
-                            <p className="text-gray-500">DOB</p>
+                            <p className="text-gray-500">Date of birth</p>
+
                             <p className="font-medium">
                               {player.dateOfBirth || "-"}
                             </p>
                           </div>
+
                           <div>
                             <p className="text-gray-500">Registration</p>
+
                             <p className="font-medium">
                               {player.registrationStatus || "registered"}
                             </p>
@@ -758,6 +1183,7 @@ export const TeamManagerDashboard: React.FC = () => {
                             <Edit2 className="w-4 h-4 mr-1" />
                             Edit
                           </Button>
+
                           <Button
                             size="sm"
                             variant="outline"
@@ -779,6 +1205,7 @@ export const TeamManagerDashboard: React.FC = () => {
               <div className="space-y-5">
                 <div>
                   <h2 className="text-2xl font-bold">Team Fixtures</h2>
+
                   <p className="text-sm text-gray-500">
                     Fixtures involving your managed team(s).
                   </p>
@@ -791,31 +1218,35 @@ export const TeamManagerDashboard: React.FC = () => {
                 ) : (
                   <div className="space-y-4">
                     {upcomingFixtures.map((appointment) => {
-                      const isHome =
-                        managedTeamIds.has(appointment.homeTeamId);
+                      const isHome = managedTeamIds.has(
+                        appointment.homeTeamId
+                      );
 
                       return (
                         <Card key={appointment.id} className="p-5">
                           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                             <div>
                               <div className="flex flex-wrap gap-2 mb-2">
-                                <Badge variant={isHome ? "blue" : "emerald"}>
+                                <Badge
+                                  variant={isHome ? "blue" : "emerald"}
+                                >
                                   {isHome ? "HOME" : "AWAY"}
                                 </Badge>
+
                                 <Badge variant="gray">
                                   {appointment.status || "scheduled"}
                                 </Badge>
                               </div>
 
                               <h3 className="text-xl font-bold">
-                                {appointment.homeTeam} vs{" "}
-                                {appointment.awayTeam}
+                                {appointment.homeTeam || "Home team"} vs{" "}
+                                {appointment.awayTeam || "Away team"}
                               </h3>
 
                               <p className="text-sm text-gray-600 mt-1">
-                                {appointment.matchDate} •{" "}
-                                {appointment.matchTime} •{" "}
-                                {appointment.venue}
+                                {appointment.matchDate || "Date TBC"} •{" "}
+                                {appointment.matchTime || "Time TBC"} •{" "}
+                                {appointment.venue || "Venue TBC"}
                               </p>
 
                               {appointment.competition && (
@@ -830,6 +1261,7 @@ export const TeamManagerDashboard: React.FC = () => {
 
                             <div className="text-sm lg:text-right">
                               <p className="text-gray-500">Referee</p>
+
                               <p className="font-medium">
                                 {appointment.refereeName || "Not assigned"}
                               </p>
@@ -851,26 +1283,32 @@ export const TeamManagerDashboard: React.FC = () => {
             {/* PROFILE */}
             {activeTab === "profile" && (
               <Card className="p-6">
-                <h2 className="text-2xl font-bold mb-5">Team Manager Profile</h2>
+                <h2 className="text-2xl font-bold mb-5">
+                  Team Manager Profile
+                </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div>
                     <p className="text-sm text-gray-500">Name</p>
+
                     <p className="font-medium text-lg">{displayName}</p>
                   </div>
 
                   <div>
                     <p className="text-sm text-gray-500">Email</p>
+
                     <p className="font-medium text-lg">{email}</p>
                   </div>
 
                   <div>
                     <p className="text-sm text-gray-500">Global Role</p>
+
                     <Badge variant="blue">Team Manager</Badge>
                   </div>
 
                   <div>
                     <p className="text-sm text-gray-500">Managed Teams</p>
+
                     <p className="font-medium">{teams.length}</p>
                   </div>
 
@@ -878,6 +1316,7 @@ export const TeamManagerDashboard: React.FC = () => {
                     <p className="text-sm text-gray-500 mb-2">
                       Active Team Memberships
                     </p>
+
                     <div className="space-y-2">
                       {teams.map((team) => (
                         <div
@@ -885,6 +1324,7 @@ export const TeamManagerDashboard: React.FC = () => {
                           className="border rounded-lg p-3 flex items-center justify-between"
                         >
                           <span className="font-medium">{team.name}</span>
+
                           <Badge variant="emerald">Team Manager</Badge>
                         </div>
                       ))}
@@ -896,23 +1336,33 @@ export const TeamManagerDashboard: React.FC = () => {
           </>
         )}
 
-        {/* PLAYER FORM */}
+        {/* PLAYER REGISTRATION / EDIT FORM */}
         {showPlayerForm && (
           <div
             className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-            onClick={() => !saving && setShowPlayerForm(false)}
+            onClick={() => {
+              if (!saving) {
+                setShowPlayerForm(false);
+              }
+            }}
           >
             <Card
               className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6"
               onClick={(event) => event.stopPropagation()}
             >
+              {/* FORM HEADER */}
               <div className="flex items-center justify-between mb-5">
                 <div>
                   <h2 className="text-xl font-bold">
                     {selectedPlayer ? "Edit Player" : "Register Player"}
                   </h2>
+
                   <p className="text-sm text-gray-500">
-                    {selectedTeam?.name}
+                    {teams.find(
+                      (team) =>
+                        team.id ===
+                        (selectedPlayer?.teamId || selectedTeamId)
+                    )?.name || "Selected team"}
                   </p>
                 </div>
 
@@ -926,63 +1376,127 @@ export const TeamManagerDashboard: React.FC = () => {
                 </Button>
               </div>
 
+              {/* PLAYER PHOTOGRAPH */}
+              <div className="mb-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                <Avatar
+                  src={
+                    photoPreview ||
+                    (selectedPlayer
+                      ? photoUrls[selectedPlayer.id]
+                      : "") ||
+                    `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                      `${playerForm.firstName || "Player"} ${
+                        playerForm.lastName || "Photo"
+                      }`
+                    )}&background=2563eb&color=fff`
+                  }
+                  size="lg"
+                />
+
+                <div className="flex-1">
+                  <label
+                    className="block text-sm font-semibold text-gray-700 mb-1"
+                    htmlFor="player-photo"
+                  >
+                    Player photograph
+                  </label>
+
+                  <input
+                    id="player-photo"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+
+                      if (file && file.size > 5 * 1024 * 1024) {
+                        alert("Player photo must not exceed 5 MB.");
+                        event.target.value = "";
+                        return;
+                      }
+
+                      setPhotoFile(file);
+
+                      setPhotoPreview((previousPreview) => {
+                        if (previousPreview) {
+                          URL.revokeObjectURL(previousPreview);
+                        }
+
+                        return file ? URL.createObjectURL(file) : "";
+                      });
+                    }}
+                    className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
+                  />
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    JPEG, PNG or WebP. Maximum 5 MB. The photograph is
+                    uploaded privately through the RefCentral backend.
+                  </p>
+                </div>
+              </div>
+
+              {/* PLAYER DETAILS */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   value={playerForm.firstName}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      firstName: e.target.value,
+                      firstName: event.target.value,
                     })
                   }
                   placeholder="First name *"
+                  aria-label="First name"
                   className="border rounded-lg px-4 py-2"
                 />
 
                 <input
                   value={playerForm.middleName}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      middleName: e.target.value,
+                      middleName: event.target.value,
                     })
                   }
                   placeholder="Middle name"
+                  aria-label="Middle name"
                   className="border rounded-lg px-4 py-2"
                 />
 
                 <input
                   value={playerForm.lastName}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      lastName: e.target.value,
+                      lastName: event.target.value,
                     })
                   }
                   placeholder="Surname *"
+                  aria-label="Surname"
                   className="border rounded-lg px-4 py-2"
                 />
 
                 <input
                   type="date"
                   value={playerForm.dateOfBirth}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      dateOfBirth: e.target.value,
+                      dateOfBirth: event.target.value,
                     })
                   }
+                  aria-label="Date of birth"
                   className="border rounded-lg px-4 py-2"
                 />
 
                 <select
                   value={playerForm.gender}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      gender: e.target.value,
+                      gender: event.target.value,
                     })
                   }
+                  aria-label="Gender"
                   className="border rounded-lg px-4 py-2 bg-white"
                 >
                   <option value="">Gender</option>
@@ -992,13 +1506,14 @@ export const TeamManagerDashboard: React.FC = () => {
 
                 <input
                   value={playerForm.position}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      position: e.target.value,
+                      position: event.target.value,
                     })
                   }
-                  placeholder="Position"
+                  placeholder="Playing position"
+                  aria-label="Playing position"
                   className="border rounded-lg px-4 py-2"
                 />
 
@@ -1006,25 +1521,28 @@ export const TeamManagerDashboard: React.FC = () => {
                   type="number"
                   min={1}
                   max={99}
+                  step={1}
                   value={playerForm.jerseyNumber}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setPlayerForm({
                       ...playerForm,
-                      jerseyNumber: e.target.value,
+                      jerseyNumber: event.target.value,
                     })
                   }
                   placeholder="Jersey number"
+                  aria-label="Jersey number"
                   className="border rounded-lg px-4 py-2"
                 />
               </div>
 
+              {/* SECURITY INFORMATION */}
               <div className="mt-6 p-4 rounded-lg bg-blue-50 text-sm text-blue-800">
-                Player photos and identity documents belong to the secure
-                player-registration workflow. They should be uploaded through
-                the protected backend endpoints, not exposed as public
-                Firestore fields.
+                Player records and photographs are saved through the
+                authenticated RefCentral API. The backend must verify your
+                active Team Manager membership before allowing changes.
               </div>
 
+              {/* FORM ACTIONS */}
               <div className="flex justify-end gap-2 mt-6">
                 <Button
                   variant="outline"
@@ -1033,6 +1551,7 @@ export const TeamManagerDashboard: React.FC = () => {
                 >
                   Cancel
                 </Button>
+
                 <Button
                   onClick={savePlayer}
                   disabled={saving}

@@ -43,189 +43,86 @@ export const TeamManagerRegistrationForm: React.FC<
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loading) return;
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://refcentral.abitonp.workers.dev"
+).replace(/\/$/, "");
 
-    if (!user) {
-      toast({
-        title: "Not signed in",
-        description: "Your session was lost. Please sign in again and retry.",
-        variant: "destructive",
-      });
-      return;
-    }
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    setLoading(true);
+  if (loading) return;
 
-    // Kept outside the try so the catch block can log what was already on file.
-    let existing: Record<string, unknown> = {};
+  if (!user) {
+    toast({
+      title: "Not signed in",
+      description: "Please sign in again.",
+      variant: "destructive",
+    });
+    return;
+  }
 
-    try {
-      const teamName = (formData.teamName || "").trim();
-      const ageGroup = formData.ageGroup || "";
-      const teamId = slugify(`${teamName} ${ageGroup}`);
+  setLoading(true);
 
-      if (!teamId) {
-        toast({
-          title: "Team name required",
-          description: "Enter the name of the team you represent.",
-          variant: "destructive",
-        });
-        return;
+  try {
+    const token = await user.getIdToken();
+
+    const response = await fetch(
+      `${API_BASE_URL}/api/team-registrations`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          team: {
+            name: formData.teamName?.trim() || "",
+            clubName: formData.clubName?.trim() || "",
+            teamType: formData.teamType || "",
+            ageGroup: formData.ageGroup || "",
+            division: formData.division?.trim() || "",
+            homeGround: formData.homeGround?.trim() || "",
+            city: formData.city?.trim() || "",
+            colours: formData.colours?.trim() || "",
+          },
+          manager: {
+            displayName: user.displayName || "",
+            mobileNumber:
+              formData.mobileNumber?.trim() || "",
+            altContact:
+              formData.altContact?.trim() || "",
+          },
+        }),
       }
+    );
 
-      const userRef = doc(db, "users", user.uid);
-      const managerRef = doc(db, "team_managers", user.uid);
-      const teamRef = doc(db, "teams", teamId);
+    const result = await response.json().catch(() => ({}));
 
-      const [userSnap, managerSnap, teamSnap] = await Promise.all([
-        getDoc(userRef),
-        getDoc(managerRef),
-        getDoc(teamRef),
-      ]);
-
-      const pick = (d: any) =>
-        d ? { role: d.role, approved: d.approved, status: d.status } : null;
-      existing = {
-        users: pick(userSnap.exists() ? userSnap.data() : null),
-        team_managers: pick(managerSnap.exists() ? managerSnap.data() : null),
-        team: teamSnap.exists()
-          ? { managerUid: teamSnap.data().managerUid, status: teamSnap.data().status }
-          : null,
-      };
-
-      // Roles can only be set once. Don't touch another role's account.
-      const existingRole = userSnap.exists() ? userSnap.data().role : null;
-      if (existingRole && existingRole !== "team_manager") {
-        toast({
-          title: "Account already registered",
-          description: `This Google account is already registered as ${existingRole}. Use a different account.`,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Someone else already registered this team.
-      const teamIsMine =
-        teamSnap.exists() && teamSnap.data().managerUid === user.uid;
-      if (teamSnap.exists() && !teamIsMine) {
-        toast({
-          title: "Team already registered",
-          description:
-            "A team with this name and age group already exists. Ask an Executive to link you to it as manager.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const managerName =
-        user.displayName || `${formData.firstName || ""} ${formData.surname || ""}`.trim();
-
-      // ---- TEAM document ----
-      // Team-level details only. The manager's personal contact numbers
-      // stay on the team_managers document, because teams are readable by
-      // every signed-in user.
-      const teamProfile = {
-        name: teamName,
-        nameLower: teamName.toLowerCase(),
-        clubName: (formData.clubName || "").trim(),
-        teamType: formData.teamType || "",
-        ageGroup,
-        division: (formData.division || "").trim(),
-        homeGround: (formData.homeGround || "").trim(),
-        city: (formData.city || "").trim(),
-        colours: (formData.colours || "").trim(),
-        managerName,
-        lastEdited: serverTimestamp(),
-      };
-
-      const teamProtected = {
-        managerUid: user.uid,
-        createdBy: user.uid,
-        approved: false,
-        status: "pending", // an Executive activates the team on approval
-        createdAt: serverTimestamp(),
-      };
-
-      // ---- TEAM MANAGER profile ----
-      const managerProfile = {
-        email: user.email,
-        displayName: managerName,
-        mobileNumber: (formData.mobileNumber || "").trim(),
-        altContact: (formData.altContact || "").trim(),
-        lastEdited: serverTimestamp(),
-      };
-
-      const managerProtected = {
-        uid: user.uid,
-        role: "team_manager",
-        approved: false,
-        status: "pending",
-        teamId,
-        teamName,
-        createdAt: serverTimestamp(),
-      };
-
-      // ---- USERS document (kept light) ----
-      const userProfile = {
-        email: user.email,
-        displayName: managerName,
-        lastEdited: serverTimestamp(),
-      };
-
-      const userProtected = {
-        uid: user.uid,
-        role: "team_manager",
-        approved: false,
-        status: "pending",
-        createdAt: serverTimestamp(),
-      };
-
-      const usersPayload = !userSnap.exists()
-        ? { ...userProfile, ...userProtected }
-        : existingRole
-          ? userProfile // already has a role: profile fields only
-          : { ...userProfile, role: "team_manager" }; // legacy doc, no role yet
-
-      const managerPayload = managerSnap.exists()
-        ? managerProfile
-        : { ...managerProfile, ...managerProtected };
-
-      const teamPayload = teamSnap.exists()
-        ? teamProfile
-        : { ...teamProfile, ...teamProtected };
-
-      // One atomic commit: user, manager profile and team are saved together
-      // or not at all.
-      const batch = writeBatch(db);
-      batch.set(userRef, usersPayload, { merge: true });
-      batch.set(managerRef, managerPayload, { merge: true });
-      batch.set(teamRef, teamPayload, { merge: true });
-      await batch.commit();
-
-      toast({
-        title: "✅ Registration Submitted",
-        description: "Your team and account are awaiting executive approval.",
-      });
-      onComplete();
-    } catch (error: any) {
-      console.error(
-        "Team manager registration failed:",
-        error?.code,
-        error?.message,
-        "Existing docs:",
-        existing
+    if (!response.ok) {
+      throw new Error(
+        result.detail || `HTTP ${response.status}`
       );
-      toast({
-        title: "Registration failed",
-        description: `${error?.code || "error"}: ${error?.message || "Unknown error"}`,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
     }
-  };
+
+    toast({
+      title: "Registration submitted",
+      description:
+        "Your team is awaiting Executive approval.",
+    });
+
+    onComplete();
+  } catch (error: any) {
+    toast({
+      title: "Registration failed",
+      description:
+        error.message || "Please try again.",
+      variant: "destructive",
+    });
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <form

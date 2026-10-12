@@ -21,6 +21,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import PrivacyPolicy from "./pages/privacy-policy";
 import DataDeletion from "./pages/Deletion";
+import { TeamManagerDashboard } from "./components/team_admin/TeamManagerDashboard";
 
 // 🔹 Query Client
 const queryClient = new QueryClient();
@@ -125,6 +126,15 @@ const App = () => {
                 element={
                   <ProtectedRoute allowedRole="referee">
                     <RefereeDashboard />
+                  </ProtectedRoute>
+                }
+              />
+
+                <Route
+                path="/dashboard/team_manager"
+                element={
+                  <ProtectedRoute allowedRole="team_manager">
+                    <TeamManagerDashboard />
                   </ProtectedRoute>
                 }
               />
