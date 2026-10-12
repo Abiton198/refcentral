@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Avatar } from "../ui/avatar";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -251,6 +251,8 @@ export const TeamManagerDashboard: React.FC = () => {
     profile?.displayName || user?.displayName || "Team Manager";
 
   const email = profile?.email || user?.email || "";
+
+const cameraInputRef = useRef(null);
 
   const photoURL =
     profile?.photoURL ||
@@ -1377,62 +1379,160 @@ export const TeamManagerDashboard: React.FC = () => {
               </div>
 
               {/* PLAYER PHOTOGRAPH */}
-              <div className="mb-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                <Avatar
-                  src={
-                    photoPreview ||
-                    (selectedPlayer
-                      ? photoUrls[selectedPlayer.id]
-                      : "") ||
-                    `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                      `${playerForm.firstName || "Player"} ${
-                        playerForm.lastName || "Photo"
-                      }`
-                    )}&background=2563eb&color=fff`
-                  }
-                  size="lg"
-                />
 
-                <div className="flex-1">
-                  <label
-                    className="block text-sm font-semibold text-gray-700 mb-1"
-                    htmlFor="player-photo"
-                  >
-                    Player photograph
-                  </label>
+<div className="mb-5 flex flex-col sm:flex-row items-start gap-4">
+  <div className="shrink-0">
+    <Avatar
+      src={
+        photoPreview ||
+        (selectedPlayer ? photoUrls[selectedPlayer.id] : "") ||
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(
+          `${playerForm.firstName || "Player"} ${
+            playerForm.lastName || "Photo"
+          }`
+        )}&background=2563eb&color=fff`
+      }
+      size="lg"
+    />
+  </div>
 
-                  <input
-                    id="player-photo"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] || null;
+  <div className="flex-1 w-full">
+    <label className="block text-sm font-semibold text-gray-700 mb-2">
+      Player photograph
+    </label>
 
-                      if (file && file.size > 5 * 1024 * 1024) {
-                        alert("Player photo must not exceed 5 MB.");
-                        event.target.value = "";
-                        return;
-                      }
+    {/* Upload from the device */}
+    <input
+      id="player-photo"
+      type="file"
+      accept="image/jpeg,image/png,image/webp"
+      onChange={(event) => {
+        const file = event.target.files?.[0] || null;
 
-                      setPhotoFile(file);
+        if (!file) return;
 
-                      setPhotoPreview((previousPreview) => {
-                        if (previousPreview) {
-                          URL.revokeObjectURL(previousPreview);
-                        }
+        if (file.size > 5 * 1024 * 1024) {
+          alert("Player photo must not exceed 5 MB.");
+          event.target.value = "";
+          return;
+        }
 
-                        return file ? URL.createObjectURL(file) : "";
-                      });
-                    }}
-                    className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
-                  />
+        setPhotoFile(file);
 
-                  <p className="mt-1 text-xs text-gray-500">
-                    JPEG, PNG or WebP. Maximum 5 MB. The photograph is
-                    uploaded privately through the RefCentral backend.
-                  </p>
-                </div>
-              </div>
+        setPhotoPreview((previousPreview) => {
+          if (previousPreview?.startsWith("blob:")) {
+            URL.revokeObjectURL(previousPreview);
+          }
+
+          return URL.createObjectURL(file);
+        });
+      }}
+      className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
+    />
+
+    {/* Hidden camera input */}
+    <input
+      ref={cameraInputRef}
+      type="file"
+      accept="image/*"
+      capture="user"
+      className="hidden"
+      onChange={(event) => {
+        const file = event.target.files?.[0] || null;
+
+        if (!file) return;
+
+        if (!file.type.startsWith("image/")) {
+          alert("Please select a valid image.");
+          event.target.value = "";
+          return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+          alert("Player photo must not exceed 5 MB.");
+          event.target.value = "";
+          return;
+        }
+
+        setPhotoFile(file);
+
+        setPhotoPreview((previousPreview) => {
+          if (previousPreview?.startsWith("blob:")) {
+            URL.revokeObjectURL(previousPreview);
+          }
+
+          return URL.createObjectURL(file);
+        });
+
+        // Allow taking the same photo again if needed.
+        event.target.value = "";
+      }}
+    />
+
+    {/* Camera and photo actions */}
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() => cameraInputRef.current?.click()}
+        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+      >
+        <span aria-hidden="true">📷</span>
+        Open camera
+      </button>
+
+      <button
+        type="button"
+        disabled={!photoFile}
+        onClick={() => {
+          if (!photoFile) {
+            alert("Please take or select a photo first.");
+            return;
+          }
+
+          alert(
+            "Photo selected and ready to save. Submit the player form to upload it to RefCentral."
+          );
+        }}
+        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Save photo
+      </button>
+
+      {photoFile && (
+        <button
+          type="button"
+          onClick={() => {
+            setPhotoFile(null);
+
+            setPhotoPreview((previousPreview) => {
+              if (previousPreview?.startsWith("blob:")) {
+                URL.revokeObjectURL(previousPreview);
+              }
+
+              return "";
+            });
+
+            const uploadInput = document.getElementById("player-photo");
+            if (uploadInput) uploadInput.value = "";
+          }}
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          Remove photo
+        </button>
+      )}
+    </div>
+
+    <p className="mt-2 text-xs text-gray-500">
+      Take a photograph using your device camera or upload an existing image.
+      Supported formats: JPEG, PNG and WebP. Maximum size: 5 MB.
+    </p>
+
+    <p className="mt-1 text-xs text-blue-700">
+      The selected photo is prepared for saving. Submit the player form to
+      upload it through the RefCentral backend.
+    </p>
+  </div>
+</div>
 
               {/* PLAYER DETAILS */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
