@@ -288,16 +288,6 @@ export const TeamManagerDashboard: React.FC = () => {
     [players, selectedTeamId, managedTeamIds]
   );
 
-  const teamAppointments = useMemo(
-    () =>
-      appointments.filter(
-        (appointment) =>
-          managedTeamIds.has(appointment.homeTeamId) ||
-          managedTeamIds.has(appointment.awayTeamId)
-      ),
-    [appointments, managedTeamIds]
-  );
-
   // ---------------------------------------------------------
   // Load the manager's user profile.
   // ---------------------------------------------------------
@@ -567,8 +557,17 @@ export const TeamManagerDashboard: React.FC = () => {
   // ---------------------------------------------------------
   // Load fixtures involving the manager's teams.
   // ---------------------------------------------------------
+
+  // ---------------------------------------------------------
+  // Load appointments from Firestore.
+  //
+  // IMPORTANT:
+  // Do not filter by team IDs in this listener because older
+  // appointments may contain team names without team IDs.
+  // Filtering happens later, after appointments are loaded.
+  // ---------------------------------------------------------
   useEffect(() => {
-    if (!managedTeamIds.size) {
+    if (!uid) {
       setAppointments([]);
       return;
     }
@@ -576,27 +575,49 @@ export const TeamManagerDashboard: React.FC = () => {
     const unsubscribe = onSnapshot(
       collection(db, "appointments"),
       (snapshot) => {
-        const data = snapshot.docs
-          .map((item) => ({
+        const data = snapshot.docs.map((item) => {
+          const raw = item.data();
+
+          return {
+            ...raw,
             id: item.id,
-            ...item.data(),
-          }))
-          .filter(
-            (appointment: any) =>
-              managedTeamIds.has(appointment.homeTeamId) ||
-              managedTeamIds.has(appointment.awayTeamId)
-          ) as Appointment[];
+
+            // Support both the current and legacy field names.
+            homeTeam: raw.homeTeam || raw.home_team || "",
+            homeTeamId: raw.homeTeamId || raw.home_team_id || "",
+            awayTeam: raw.awayTeam || raw.away_team || "",
+            awayTeamId: raw.awayTeamId || raw.away_team_id || "",
+
+            matchDate: raw.matchDate || raw.match_date || raw.date || "",
+            matchTime: raw.matchTime || raw.match_time || raw.time || "",
+
+            venue: raw.venue || "",
+            refereeName:
+              raw.refereeName || raw.referee_name || raw.referee || "",
+            status: raw.status || "scheduled",
+          };
+        }) as Appointment[];
+
+        console.log(
+          "[TeamManagerDashboard] Appointments loaded:",
+          data.length,
+          data
+        );
 
         setAppointments(data);
       },
       (error) => {
-        console.error("Unable to load fixtures:", error);
+        console.error(
+          "[TeamManagerDashboard] Firestore appointment read failed:",
+          error
+        );
         setAppointments([]);
       }
     );
 
     return () => unsubscribe();
-  }, [managedTeamIds]);
+  }, [uid]);
+
 
   // ---------------------------------------------------------
   // Open a blank player registration form.
@@ -856,16 +877,243 @@ export const TeamManagerDashboard: React.FC = () => {
     (player) => player.status !== "inactive"
   );
 
-  const upcomingFixtures = teamAppointments
-    .filter(
-      (appointment) =>
-        (appointment.status || "").toLowerCase() !== "cancelled"
-    )
-    .sort((a, b) =>
-      `${a.matchDate} ${a.matchTime}`.localeCompare(
-        `${b.matchDate} ${b.matchTime}`
-      )
+
+  const managedTeamNames = useMemo(() => {
+    return new Set(
+      teams
+        .filter((team) => managedTeamIds.has(team.id))
+        .map((team) => String(team.name || team.teamName || "").trim().toLowerCase())
+        .filter(Boolean)
     );
+  }, [teams, managedTeamIds]);
+
+  const teamAppointments = useMemo(
+    () =>
+      appointments.filter((appointment) => {
+        const homeTeamId = appointment.homeTeamId || "";
+        const awayTeamId = appointment.awayTeamId || "";
+
+        const homeTeamName = String(appointment.homeTeam || "")
+          .trim()
+          .toLowerCase();
+
+        const awayTeamName = String(appointment.awayTeam || "")
+          .trim()
+          .toLowerCase();
+
+        return (
+          managedTeamIds.has(homeTeamId) ||
+          managedTeamIds.has(awayTeamId) ||
+          (homeTeamName !== "" && managedTeamNames.has(homeTeamName)) ||
+          (awayTeamName !== "" && managedTeamNames.has(awayTeamName))
+        );
+      }),
+    [appointments, managedTeamIds, managedTeamNames]
+  );
+
+  const upcomingFixtures = useMemo(
+    () =>
+      teamAppointments
+        .filter(
+          (appointment) =>
+            String(appointment.status || "").toLowerCase() !== "cancelled"
+        )
+        .sort((a, b) =>
+          `${a.matchDate || a.date || ""} ${a.matchTime || a.time || ""}`
+            .localeCompare(
+              `${b.matchDate || b.date || ""} ${b.matchTime || b.time || ""}`
+            )
+        ),
+    [teamAppointments]
+  );
+
+
+  // TEAM SELECTION
+
+  /**
+   * Teamsheet state:
+   * - Loads registered players for teams managed by this user.
+   * - Tracks each fixture's player selections separately.
+   * - Submits a teamsheet to the Firestore "teamsheets" collection.
+   */
+  const [playersByTeam, setPlayersByTeam] = useState<Record<string, any[]>>({});
+  const [selectedPlayers, setSelectedPlayers] = useState<Record<string, string[]>>({});
+  const [submittingSheets, setSubmittingSheets] = useState<Record<string, boolean>>({});
+  const [teamsheetMessages, setTeamsheetMessages] = useState<Record<string, string>>({});
+
+  /**
+   * Subscribe to registered players belonging to managed teams.
+   * Each team uses its Firestore document ID as teamId.
+   */
+  useEffect(() => {
+    const teamIds = Array.from(managedTeamIds);
+
+    if (teamIds.length === 0) {
+      setPlayersByTeam({});
+      return;
+    }
+
+    const unsubscribers = teamIds.map((teamId) => {
+      const playersQuery = query(
+        collection(db, "players"),
+        where("teamId", "==", teamId)
+      );
+
+      return onSnapshot(
+        playersQuery,
+        (snapshot) => {
+          const players = snapshot.docs.map((playerDoc) => ({
+            id: playerDoc.id,
+            ...playerDoc.data(),
+          }));
+
+          setPlayersByTeam((previous) => ({
+            ...previous,
+            [teamId]: players,
+          }));
+        },
+        (error) => {
+          console.error(`Could not load players for team ${teamId}:`, error);
+        }
+      );
+    });
+
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+  }, [managedTeamIds]);
+
+  /**
+   * Select or deselect a player for a particular fixture's teamsheet.
+   */
+  const toggleTeamsheetPlayer = (
+    sheetKey: string,
+    playerId: string,
+    checked: boolean
+  ) => {
+    setSelectedPlayers((previous) => {
+      const current = previous[sheetKey] || [];
+
+      return {
+        ...previous,
+        [sheetKey]: checked
+          ? current.includes(playerId)
+            ? current
+            : [...current, playerId]
+          : current.filter((id) => id !== playerId),
+      };
+    });
+
+    setTeamsheetMessages((previous) => ({
+      ...previous,
+      [sheetKey]: "",
+    }));
+  };
+
+  /**
+   * Save a submitted teamsheet.
+   * A stable document ID prevents duplicate teamsheets for the same
+   * fixture and team when the manager submits again.
+   */
+  const submitTeamsheet = async (
+    appointment: Appointment,
+    teamId: string,
+    teamName: string,
+    sheetKey: string
+  ) => {
+    const selectedIds = selectedPlayers[sheetKey] || [];
+    const roster = playersByTeam[teamId] || [];
+
+    if (selectedIds.length === 0) {
+      setTeamsheetMessages((previous) => ({
+        ...previous,
+        [sheetKey]: "Select at least one player before submitting.",
+      }));
+      return;
+    }
+
+    if (!uid) {
+      setTeamsheetMessages((previous) => ({
+        ...previous,
+        [sheetKey]: "Please sign in again before submitting.",
+      }));
+      return;
+    }
+
+    const selectedRoster = roster
+      .filter((player) => selectedIds.includes(player.id))
+      .map((player) => ({
+        playerId: player.id,
+        name:
+          player.fullName ||
+          player.name ||
+          [player.firstName, player.lastName].filter(Boolean).join(" ") ||
+          "Unnamed player",
+        jerseyNumber: player.jerseyNumber || player.jersey_number || null,
+        position: player.position || "",
+      }));
+
+    if (selectedRoster.length !== selectedIds.length) {
+      setTeamsheetMessages((previous) => ({
+        ...previous,
+        [sheetKey]: "Some selected players are no longer in the loaded roster. Refresh and try again.",
+      }));
+      return;
+    }
+
+    setSubmittingSheets((previous) => ({
+      ...previous,
+      [sheetKey]: true,
+    }));
+
+    setTeamsheetMessages((previous) => ({
+      ...previous,
+      [sheetKey]: "",
+    }));
+
+    try {
+      const teamsheetId = `${appointment.id}_${teamId}`;
+
+      await setDoc(
+        doc(db, "teamsheets", teamsheetId),
+        {
+          fixtureId: appointment.id,
+          teamId,
+          teamName,
+          homeTeam: appointment.homeTeam || "",
+          awayTeam: appointment.awayTeam || "",
+          matchDate: appointment.matchDate || appointment.date || "",
+          matchTime: appointment.matchTime || appointment.time || "",
+          venue: appointment.venue || "",
+          players: selectedRoster,
+          playerCount: selectedRoster.length,
+          submittedBy: uid,
+          submittedByEmail: user?.email || "",
+          status: "submitted",
+          submittedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setTeamsheetMessages((previous) => ({
+        ...previous,
+        [sheetKey]: "Teamsheet submitted successfully.",
+      }));
+    } catch (error) {
+      console.error("Teamsheet submission failed:", error);
+
+      setTeamsheetMessages((previous) => ({
+        ...previous,
+        [sheetKey]:
+          "Submission failed. Check your Firestore permissions and try again.",
+      }));
+    } finally {
+      setSubmittingSheets((previous) => ({
+        ...previous,
+        [sheetKey]: false,
+      }));
+    }
+  };
+
 
   // ---------------------------------------------------------
   // Dashboard interface.
@@ -1086,123 +1334,6 @@ export const TeamManagerDashboard: React.FC = () => {
             )}
 
             {/* PLAYERS */}
-            {/* {activeTab === "players" && (
-              <div className="space-y-5">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-2xl font-bold">Team Players</h2>
-
-                    <p className="text-sm text-gray-500">
-                      {selectedTeam?.name} • {activePlayers.length} active
-                      players
-                    </p>
-                  </div>
-
-                  <Button
-                    onClick={openNewPlayer}
-                    className="flex gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Register Player
-                  </Button>
-                </div>
-
-                {activePlayers.length === 0 ? (
-                  <Card className="p-10 text-center">
-                    <Users className="w-10 h-10 mx-auto mb-3 text-gray-400" />
-
-                    <h3 className="font-bold">
-                      No players registered
-                    </h3>
-
-                    <p className="text-sm text-gray-500 mt-1">
-                      Start by registering the players for this team.
-                    </p>
-                  </Card>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {activePlayers.map((player) => (
-                      <Card key={player.id} className="p-5">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <Avatar
-                              src={
-                                photoUrls[player.id] ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                                  `${player.firstName} ${player.lastName}`
-                                )}&background=2563eb&color=fff`
-                              }
-                              size="md"
-                            />
-
-                            <div>
-                              <h3 className="font-bold">
-                                {player.firstName}{" "}
-                                {player.middleName
-                                  ? `${player.middleName} `
-                                  : ""}
-                                {player.lastName}
-                              </h3>
-
-                              <p className="text-sm text-gray-500">
-                                {player.position || "Position not set"}
-                              </p>
-                            </div>
-                          </div>
-
-                          {player.jerseyNumber != null && (
-                            <Badge variant="blue">
-                              #{player.jerseyNumber}
-                            </Badge>
-                          )}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                          <div>
-                            <p className="text-gray-500">Date of birth</p>
-
-                            <p className="font-medium">
-                              {player.dateOfBirth || "-"}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-gray-500">Registration</p>
-
-                            <p className="font-medium">
-                              {player.registrationStatus || "registered"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2 mt-5">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEditPlayer(player)}
-                            className="flex-1"
-                          >
-                            <Edit2 className="w-4 h-4 mr-1" />
-                            Edit
-                          </Button>
-
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => removePlayer(player)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )} */}
-
-
             {activeTab === "players" && (
               <div className="space-y-5">
                 {/* Header */}
@@ -1368,13 +1499,13 @@ export const TeamManagerDashboard: React.FC = () => {
             )}
 
             {/* FIXTURES */}
+
             {activeTab === "fixtures" && (
               <div className="space-y-5">
                 <div>
                   <h2 className="text-2xl font-bold">Team Fixtures</h2>
-
                   <p className="text-sm text-gray-500">
-                    Fixtures involving your managed team(s).
+                    Select your registered players and submit your teamsheet for each fixture.
                   </p>
                 </div>
 
@@ -1383,20 +1514,52 @@ export const TeamManagerDashboard: React.FC = () => {
                     No fixtures have been created for your team yet.
                   </Card>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-5">
                     {upcomingFixtures.map((appointment) => {
-                      const isHome = managedTeamIds.has(
-                        appointment.homeTeamId
-                      );
+                      const homeName = String(appointment.homeTeam || "")
+                        .trim()
+                        .toLowerCase();
+                      const awayName = String(appointment.awayTeam || "")
+                        .trim()
+                        .toLowerCase();
+
+                      const isHome =
+                        (!!appointment.homeTeamId &&
+                          managedTeamIds.has(appointment.homeTeamId)) ||
+                        managedTeamNames.has(homeName);
+
+                      // Resolve the managed team ID. Name matching also supports
+                      // legacy appointments that do not contain homeTeamId/awayTeamId.
+                      const teamId =
+                        appointment.homeTeamId &&
+                          managedTeamIds.has(appointment.homeTeamId)
+                          ? appointment.homeTeamId
+                          : appointment.awayTeamId &&
+                            managedTeamIds.has(appointment.awayTeamId)
+                            ? appointment.awayTeamId
+                            : teams.find(
+                              (team) =>
+                                String(team.name || team.teamName || "")
+                                  .trim()
+                                  .toLowerCase() === (isHome ? homeName : awayName)
+                            )?.id || "";
+
+                      const teamName = isHome
+                        ? appointment.homeTeam
+                        : appointment.awayTeam;
+
+                      const sheetKey = `${appointment.id}_${teamId}`;
+                      const roster = teamId ? playersByTeam[teamId] || [] : [];
+                      const selectedIds = selectedPlayers[sheetKey] || [];
+                      const isSubmitting = submittingSheets[sheetKey] || false;
+                      const message = teamsheetMessages[sheetKey] || "";
 
                       return (
                         <Card key={appointment.id} className="p-5">
-                          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                             <div>
                               <div className="flex flex-wrap gap-2 mb-2">
-                                <Badge
-                                  variant={isHome ? "blue" : "emerald"}
-                                >
+                                <Badge variant={isHome ? "blue" : "emerald"}>
                                   {isHome ? "HOME" : "AWAY"}
                                 </Badge>
 
@@ -1410,34 +1573,145 @@ export const TeamManagerDashboard: React.FC = () => {
                                 {appointment.awayTeam || "Away team"}
                               </h3>
 
-                              <p className="text-sm text-gray-600 mt-1">
-                                {appointment.matchDate || "Date TBC"} •{" "}
-                                {appointment.matchTime || "Time TBC"} •{" "}
+                              <p className="mt-1 text-sm text-gray-600">
+                                {appointment.matchDate || appointment.date || "Date TBC"}
+                                {" • "}
+                                {appointment.matchTime || appointment.time || "Time TBC"}
+                                {" • "}
                                 {appointment.venue || "Venue TBC"}
                               </p>
 
                               {appointment.competition && (
-                                <p className="text-sm text-gray-500 mt-1">
+                                <p className="mt-1 text-sm text-gray-500">
                                   {appointment.competition}
-                                  {appointment.season
-                                    ? ` • ${appointment.season}`
-                                    : ""}
+                                  {appointment.season ? ` • ${appointment.season}` : ""}
                                 </p>
                               )}
                             </div>
 
-                            <div className="text-sm lg:text-right">
-                              <p className="text-gray-500">Referee</p>
-
-                              <p className="font-medium">
-                                {appointment.refereeName || "Not assigned"}
+                            <div className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+                              <p className="text-gray-500">Your teamsheet</p>
+                              <p className="font-semibold">
+                                {selectedIds.length} player(s) selected
                               </p>
                             </div>
                           </div>
 
-                          <div className="mt-4 pt-4 border-t text-sm text-gray-600">
-                            Teamsheet preparation will use this appointment
-                            and the team's registered players.
+                          <div className="mt-5 border-t pt-5 space-y-4">
+                            <div>
+                              <h4 className="text-lg font-semibold">
+                                Select players — {teamName || "Your team"}
+                              </h4>
+                              <p className="text-sm text-gray-500">
+                                Select only players registered to your managed team.
+                              </p>
+                            </div>
+
+                            {!teamId ? (
+                              <div className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800">
+                                Your team could not be matched to this fixture. Check that
+                                the team name and team document ID match your team assignment.
+                              </div>
+                            ) : roster.length === 0 ? (
+                              <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
+                                No registered players were found for this team. Register
+                                players first, or check the player documents' teamId field
+                                and Firestore read permissions.
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {roster.map((player) => {
+                                  const playerName =
+                                    player.fullName ||
+                                    player.name ||
+                                    [
+                                      player.firstName,
+                                      player.lastName,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ") ||
+                                    "Unnamed player";
+
+                                  const isSelected = selectedIds.includes(player.id);
+
+                                  return (
+                                    <label
+                                      key={player.id}
+                                      className="flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-gray-50"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={(event) =>
+                                          toggleTeamsheetPlayer(
+                                            sheetKey,
+                                            player.id,
+                                            event.target.checked
+                                          )
+                                        }
+                                        className="h-4 w-4"
+                                      />
+
+                                      <span className="flex-1 font-medium">
+                                        {playerName}
+                                      </span>
+
+                                      {(player.jerseyNumber || player.jersey_number) && (
+                                        <span className="text-sm text-gray-500">
+                                          #{player.jerseyNumber || player.jersey_number}
+                                        </span>
+                                      )}
+
+                                      {player.position && (
+                                        <span className="text-sm text-gray-500">
+                                          {player.position}
+                                        </span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {message && (
+                              <p
+                                role="status"
+                                className={`rounded-lg p-3 text-sm ${message.includes("successfully")
+                                  ? "bg-green-50 text-green-700"
+                                  : "bg-red-50 text-red-700"
+                                  }`}
+                              >
+                                {message}
+                              </p>
+                            )}
+
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                              <p className="text-sm text-gray-500">
+                                Review your selection before submitting. You can update
+                                the teamsheet by submitting it again.
+                              </p>
+
+                              <button
+                                type="button"
+                                disabled={
+                                  !teamId ||
+                                  roster.length === 0 ||
+                                  selectedIds.length === 0 ||
+                                  isSubmitting
+                                }
+                                onClick={() =>
+                                  submitTeamsheet(
+                                    appointment,
+                                    teamId,
+                                    teamName || "",
+                                    sheetKey
+                                  )
+                                }
+                                className="rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isSubmitting ? "Submitting..." : "Submit Teamsheet"}
+                              </button>
+                            </div>
                           </div>
                         </Card>
                       );
@@ -1446,6 +1720,7 @@ export const TeamManagerDashboard: React.FC = () => {
                 )}
               </div>
             )}
+
 
             {/* PROFILE */}
             {activeTab === "profile" && (

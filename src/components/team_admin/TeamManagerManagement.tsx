@@ -24,11 +24,28 @@ import { toast } from "@/components/ui/use-toast";
 // assumption. Adjust them to match your existing team_memberships documents.
 const CREATE_MEMBERSHIP_ON_APPROVE = true;
 
+// Collections that hold team manager records. They are queried side by side and
+// merged by user id, because Firestore cannot query two collections at once.
+// When a manager exists in several, the FIRST listed wins for display, and an
+// approval updates every copy. Remove an entry if you only use one.
+const MANAGER_SOURCES = [
+  "team_registrations",
+  "team_manager_profiles",
+  "team_managers",
+];
+
+// Document ID is the user's uid in team_managers; other collections may store
+// it as a field instead.
+const uidOf = (docId: string, data: any): string =>
+  data?.uid ?? data?.userId ?? docId;
+
 type Status = "pending" | "active" | "rejected" | "suspended";
 type Filter = Status | "all";
 
 interface TeamManager {
   uid: string;
+  /** Every document this manager exists in, so approvals update all copies */
+  refs: { source: string; id: string }[];
   displayName?: string;
   email?: string;
   mobileNumber?: string;
@@ -69,44 +86,92 @@ const fmtDate = (ts: any) =>
 
 /** Live count of pending team managers, for a badge on the dashboard tab. */
 export const usePendingTeamManagerCount = () => {
-  const [count, setCount] = useState(0);
+  const [uidsBySource, setUidsBySource] = useState<Record<string, string[]>>({});
+
   useEffect(() => {
-    const q = query(
-      collection(db, "team_managers"),
-      where("status", "==", "pending")
+    const unsubs = MANAGER_SOURCES.map((source) =>
+      onSnapshot(
+        query(collection(db, source), where("status", "==", "pending")),
+        (snap) =>
+          setUidsBySource((prev) => ({
+            ...prev,
+            [source]: snap.docs.map((d) => uidOf(d.id, d.data())),
+          })),
+        (err) => {
+          console.error(`${source} pending listener failed:`, err.code);
+          setUidsBySource((prev) => ({ ...prev, [source]: [] }));
+        }
+      )
     );
-    return onSnapshot(
-      q,
-      (snap) => setCount(snap.size),
-      () => setCount(0)
-    );
+    return () => unsubs.forEach((u) => u());
   }, []);
-  return count;
+
+  // The same manager in both collections counts once
+  return new Set(Object.values(uidsBySource).flat()).size;
 };
 
 const TeamManagerManagement: React.FC = () => {
-  const [managers, setManagers] = useState<TeamManager[]>([]);
+  const [docsBySource, setDocsBySource] = useState<
+    Record<string, { id: string; data: any }[]>
+  >({});
+  const [loadedSources, setLoadedSources] = useState<Set<string>>(new Set());
+  const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({});
   const [teams, setTeams] = useState<Record<string, Team>>({});
   const [filter, setFilter] = useState<Filter>("pending");
   const [search, setSearch] = useState("");
   const [busyUid, setBusyUid] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  const loading = loadedSources.size < MANAGER_SOURCES.length;
+  const error = Object.keys(sourceErrors).length
+    ? Object.entries(sourceErrors)
+      .map(([source, code]) => `${source}: ${code}`)
+      .join(" • ")
+    : null;
+
+  // Merge the per-collection documents into one record per manager
+  const managers = useMemo<TeamManager[]>(() => {
+    const byUid = new Map<string, TeamManager>();
+    MANAGER_SOURCES.forEach((source) => {
+      (docsBySource[source] ?? []).forEach(({ id, data }) => {
+        const uid = uidOf(id, data);
+        const existing = byUid.get(uid);
+        if (!existing) {
+          byUid.set(uid, { ...data, uid, refs: [{ source, id }] });
+        } else {
+          // Earlier collections win; later ones only fill in missing fields
+          byUid.set(uid, {
+            ...data,
+            ...existing,
+            uid,
+            refs: [...existing.refs, { source, id }],
+          });
+        }
+      });
+    });
+    return Array.from(byUid.values());
+  }, [docsBySource]);
 
   useEffect(() => {
-    const unsubManagers = onSnapshot(
-      collection(db, "team_managers"),
-      (snap) => {
-        setManagers(
-          snap.docs.map((d) => ({ uid: d.id, ...(d.data() as any) }))
-        );
-        setLoading(false);
-      },
-      (err) => {
-        console.error("team_managers listener failed:", err.code, err.message);
-        setError(`${err.code}: ${err.message}`);
-        setLoading(false);
-      }
+    const unsubManagers = MANAGER_SOURCES.map((source) =>
+      onSnapshot(
+        collection(db, source),
+        (snap) => {
+          setDocsBySource((prev) => ({
+            ...prev,
+            [source]: snap.docs.map((d) => ({ id: d.id, data: d.data() })),
+          }));
+          setSourceErrors((prev) => {
+            const { [source]: _cleared, ...rest } = prev;
+            return rest;
+          });
+          setLoadedSources((prev) => new Set(prev).add(source));
+        },
+        (err) => {
+          console.error(`${source} listener failed:`, err.code, err.message);
+          setSourceErrors((prev) => ({ ...prev, [source]: err.code }));
+          setLoadedSources((prev) => new Set(prev).add(source));
+        }
+      )
     );
 
     const unsubTeams = onSnapshot(
@@ -122,7 +187,7 @@ const TeamManagerManagement: React.FC = () => {
     );
 
     return () => {
-      unsubManagers();
+      unsubManagers.forEach((u) => u());
       unsubTeams();
     };
   }, []);
@@ -183,7 +248,9 @@ const TeamManagerManagement: React.FC = () => {
 
       const batch = writeBatch(db);
       batch.update(doc(db, "users", m.uid), changes);
-      batch.update(doc(db, "team_managers", m.uid), changes);
+      m.refs.forEach(({ source, id }) => {
+        batch.update(doc(db, source, id), changes);
+      });
 
       // Activate or reject the team together with its manager.
       // Suspending a manager does not suspend the team itself.
@@ -299,11 +366,10 @@ const TeamManagerManagement: React.FC = () => {
           <button
             key={key}
             onClick={() => setFilter(key)}
-            className={`px-3 py-1.5 rounded-full text-sm border transition ${
-              filter === key
-                ? "bg-emerald-600 text-white border-emerald-600"
-                : "bg-white text-gray-700 border-gray-300 hover:border-emerald-400"
-            }`}
+            className={`px-3 py-1.5 rounded-full text-sm border transition ${filter === key
+              ? "bg-emerald-600 text-white border-emerald-600"
+              : "bg-white text-gray-700 border-gray-300 hover:border-emerald-400"
+              }`}
           >
             {label} ({counts[key]})
           </button>
@@ -312,9 +378,9 @@ const TeamManagerManagement: React.FC = () => {
 
       {error && (
         <p className="text-red-600 text-sm mb-4">
-          Could not load team managers ({error}). Check that your executive
-          account has the executive role and that the latest Firestore rules are
-          published.
+          Could not load some team manager records ({error}). Check that your
+          executive account has the executive role and that the latest Firestore
+          rules are published for each collection.
         </p>
       )}
 
@@ -348,32 +414,84 @@ const TeamManagerManagement: React.FC = () => {
                 </span>
               </div>
 
+
               <div className="space-y-1 mb-3">
-                {detail("Mobile", m.mobileNumber)}
-                {detail("Alt. contact", m.altContact)}
+                {detail("Mobile", m.mobileNumber || m.mobile || "-")}
+                {detail("Alt. contact", m.altContact || m.alternativeContact || "-")}
                 {detail("Registered", fmtDate(m.createdAt))}
               </div>
 
+              {/* Team represented */}
               <div className="rounded-lg bg-gray-50 p-3 mb-3 space-y-1">
                 <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
                   Team represented
                 </p>
-                {team || m.teamName ? (
-                  <>
-                    {detail("Team", team?.name || m.teamName)}
-                    {detail("Club / school", team?.clubName)}
-                    {detail("Type", team?.teamType)}
-                    {detail("Age group", team?.ageGroup)}
-                    {detail("Division", team?.division)}
-                    {detail("Home ground", team?.homeGround)}
-                    {detail("City", team?.city)}
-                    {detail("Colours", team?.colours)}
-                  </>
-                ) : (
-                  <p className="text-sm text-gray-500">
-                    No team on file for this manager.
-                  </p>
-                )}
+
+                {(() => {
+                  const teamData = team || {};
+
+                  const fields = [
+                    {
+                      label: "Team",
+                      value:
+                        teamData.name ||
+                        teamData.teamName ||
+                        m.teamName ||
+                        "",
+                    },
+
+                    {
+                      label: "Team type",
+                      value: teamData.teamType || teamData.type || "",
+                    },
+                    {
+                      label: "Age group",
+                      value: teamData.ageGroup || teamData.age_group || "",
+                    },
+
+                    {
+                      label: "League",
+                      value: teamData.league || "",
+                    },
+                    {
+                      label: "Home ground",
+                      value: teamData.homeGround || teamData.home_ground || "",
+                    },
+                    {
+                      label: "City",
+                      value: teamData.city || "",
+                    },
+                    {
+                      label: "Colours",
+                      value: teamData.colours || teamData.colors || "",
+                    },
+                  ];
+
+                  const hasTeamDetails = fields.some(
+                    ({ value }) =>
+                      value !== undefined &&
+                      value !== null &&
+                      String(value).trim() !== ""
+                  );
+
+                  if (!hasTeamDetails) {
+                    return (
+                      <p className="text-sm text-gray-500">
+                        No team details available. Check that this member is linked to a
+                        team and that the team record has been loaded.
+                      </p>
+                    );
+                  }
+
+                  return fields.map(({ label, value }) => (
+                    <React.Fragment key={label}>
+                      {value !== undefined &&
+                        value !== null &&
+                        String(value).trim() !== "" &&
+                        detail(label, value)}
+                    </React.Fragment>
+                  ));
+                })()}
               </div>
 
               {status === "rejected" && m.rejectionReason && (
@@ -386,14 +504,14 @@ const TeamManagerManagement: React.FC = () => {
                 {(status === "pending" ||
                   status === "rejected" ||
                   status === "suspended") && (
-                  <button
-                    onClick={() => handleApprove(m)}
-                    disabled={busy}
-                    className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
-                  >
-                    {status === "pending" ? "Approve" : "Reinstate"}
-                  </button>
-                )}
+                    <button
+                      onClick={() => handleApprove(m)}
+                      disabled={busy}
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {status === "pending" ? "Approve" : "Reinstate"}
+                    </button>
+                  )}
                 {status === "pending" && (
                   <button
                     onClick={() => handleReject(m)}
