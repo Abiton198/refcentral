@@ -24,7 +24,7 @@ import {
   UserPlus, Search, Sparkles, ShieldCheck, ClipboardCheck, Plus
 } from "lucide-react";
 import { LawsOfTheGameWidget } from "@/components/LawsOfTheGameWidget";
-import { PlayerRegistrationModal } from "./PlayerRegistrationModal";
+import { MatchSquadSelector, SquadPlayer } from "./MatchSquadSelector";
 import { motion } from "framer-motion";
 import AppointmentAlert from "@/lib/AppointmentAlert";
 
@@ -40,7 +40,6 @@ export const RefereeDashboard: React.FC = () => {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showPlayerReg, setShowPlayerReg] = useState(false);
   const [expandedTrail, setExpandedTrail] = useState<string | null>(null);
   const [showReportCenter, setShowReportCenter] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -50,9 +49,9 @@ export const RefereeDashboard: React.FC = () => {
   const [liveAppointment, setLiveAppointment] = useState<any | null>(null);
 
   // Match Logic States
-  const [selectedMatchPlayers, setSelectedMatchPlayers] = useState<{ [key: string]: any[] }>({});
+  // Squads hold camera- or manually-verified players only (see MatchSquadSelector)
+  const [selectedMatchPlayers, setSelectedMatchPlayers] = useState<{ [key: string]: SquadPlayer[] }>({});
   const [activeSelectionTeam, setActiveSelectionTeam] = useState<{ id: string, side: 'home' | 'away', teamName: string } | null>(null);
-  const [teamDatabase, setTeamDatabase] = useState<any[]>([]);
   const [availabilityModal, setAvailabilityModal] = useState(false);
   const [viewingResult, setViewingResult] = useState<any | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
@@ -95,20 +94,28 @@ export const RefereeDashboard: React.FC = () => {
   }, []);
 
   // 1. SAFE DATA FETCHING
+  // Players are no longer read here: the squad selector loads only the two
+  // teams of a match through the backend, which checks this referee's appointment.
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "players"), (snap) => {
-      setTeamDatabase(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    if (!user?.email) {
+      setLoading(false);
+      return;
+    }
 
-    if (user?.email) {
-      const q = query(collection(db, "appointments"), where("refereeEmail", "==", user.email));
-      const unsubApt = onSnapshot(q, (snap) => {
+    const q = query(collection(db, "appointments"), where("refereeEmail", "==", user.email));
+    const unsubApt = onSnapshot(
+      q,
+      (snap) => {
         setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         setLoading(false);
-      });
-      return () => { unsub(); unsubApt(); };
-    }
-    return () => unsub();
+      },
+      (err) => {
+        console.error("Appointments listener failed:", err.code, err.message);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubApt();
   }, [user]);
 
   // 2. HELPERS (Null Safe)
@@ -121,7 +128,7 @@ export const RefereeDashboard: React.FC = () => {
 
 
   // 
-  const handlePlayerToggle = (matchKey: string, player: any) => {
+  const handlePlayerToggle = (matchKey: string, player: SquadPlayer) => {
     setSelectedMatchPlayers(prev => {
       const current = prev[matchKey] || [];
       const exists = current.find(p => p.id === player.id);
@@ -407,12 +414,6 @@ export const RefereeDashboard: React.FC = () => {
             </h1>
             <p className="text-emerald-100 text-xs font-medium">Ref: {currentRefereeName}</p>
           </div>
-          <Button
-            onClick={() => setShowPlayerReg(true)}
-            className="bg-white/20 hover:bg-white/30 text-white border-none backdrop-blur-md"
-          >
-            <UserPlus className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Register Player</span>
-          </Button>
         </div>
       </div>
 
@@ -667,18 +668,11 @@ export const RefereeDashboard: React.FC = () => {
       </main>
 
       {/* FIXED BOTTOM NAVIGATION */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 z-[100] flex justify-between items-center shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 z-[100] flex justify-around items-center shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
         <div className="flex flex-col items-center gap-1 text-emerald-600">
           <Calendar className="w-5 h-5" />
           <span className="text-[10px] font-bold uppercase">Matches</span>
         </div>
-
-        <button
-          onClick={() => setShowPlayerReg(true)}
-          className="bg-emerald-600 text-white p-4 rounded-2xl -mt-10 shadow-lg shadow-emerald-200 border-4 border-[#f8fafc]"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
 
         <button
           onClick={handleLogout}
@@ -689,42 +683,17 @@ export const RefereeDashboard: React.FC = () => {
         </button>
       </div>
 
-      {/* MATCH PLAYER SELECTION */}
+      {/* MATCH SQUAD SELECTION: only this match's team, camera-verified players */}
       {activeSelectionTeam && (
-        <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex items-end justify-center">
-          <div className="bg-white w-full max-w-lg h-[80vh] rounded-t-[2.5rem] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300">
-            <div className="p-6 bg-gray-900 text-white flex justify-between items-center">
-              <h3 className="font-black uppercase">{activeSelectionTeam.teamName}</h3>
-              <Button variant="ghost" className="text-white" onClick={() => setActiveSelectionTeam(null)}><X /></Button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-2">
-              {teamDatabase.filter(p => p.teamName === activeSelectionTeam.teamName).map(player => {
-                const key = `${activeSelectionTeam.id}_${activeSelectionTeam.side}`;
-                const isSelected = selectedMatchPlayers[key]?.some(p => p.id === player.id);
-                return (
-                  <div
-                    key={player.id}
-                    onClick={() => handlePlayerToggle(key, player)}
-                    className={`p-3 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between ${isSelected ? 'bg-emerald-50 border-emerald-500' : 'bg-gray-50 border-transparent'}`}
-                  >
-                    <span className="font-bold text-sm">{player.firstName} {player.lastName}</span>
-                    <CheckCircle2 className={`w-5 h-5 ${isSelected ? 'text-emerald-600' : 'text-gray-200'}`} />
-                  </div>
-                )
-              })}
-            </div>
-            <div className="p-6">
-              <Button className="w-full bg-emerald-600 h-12 rounded-xl font-bold" onClick={() => setActiveSelectionTeam(null)}>Confirm Selection</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* PLAYER REG MODAL */}
-      {showPlayerReg && (
-        <div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4">
-          <PlayerRegistrationModal onClose={() => setShowPlayerReg(false)} />
-        </div>
+        <MatchSquadSelector
+          matchId={activeSelectionTeam.id}
+          side={activeSelectionTeam.side}
+          selected={selectedMatchPlayers[`${activeSelectionTeam.id}_${activeSelectionTeam.side}`] || []}
+          onToggle={(player) =>
+            handlePlayerToggle(`${activeSelectionTeam.id}_${activeSelectionTeam.side}`, player)
+          }
+          onClose={() => setActiveSelectionTeam(null)}
+        />
       )}
 
       {viewingResult?.isEdited && (
@@ -872,7 +841,7 @@ export const RefereeDashboard: React.FC = () => {
                     {viewingResult.homeSquad?.map((player: any, idx: number) => (
                       <div key={idx} className="flex justify-between text-[11px] border-b border-slate-50 pb-1">
                         <span className="font-bold text-slate-700">{player.firstName} {player.lastName}</span>
-                        <span className="text-slate-400 font-medium italic">{player.position?.split('(')[1]?.replace(')', '') || idx + 1}</span>
+                        <span className="text-slate-400 font-medium italic">{player.jerseyNumber || player.position?.split('(')[1]?.replace(')', '') || idx + 1}</span>
                       </div>
                     ))}
                   </div>
@@ -884,7 +853,7 @@ export const RefereeDashboard: React.FC = () => {
                   <div className="space-y-2">
                     {viewingResult.awaySquad?.map((player: any, idx: number) => (
                       <div key={idx} className="flex justify-between text-[11px] border-b border-slate-50 pb-1">
-                        <span className="text-slate-400 font-medium italic">{player.position?.split('(')[1]?.replace(')', '') || idx + 1}</span>
+                        <span className="text-slate-400 font-medium italic">{player.jerseyNumber || player.position?.split('(')[1]?.replace(')', '') || idx + 1}</span>
                         <span className="font-bold text-slate-700 text-right">{player.firstName} {player.lastName}</span>
                       </div>
                     ))}

@@ -22,17 +22,6 @@ if ("serviceWorker" in navigator) {
       .register(`/firebase-messaging-sw.js?${swParams.toString()}`)
       .then((registration) => {
         console.log("✅ Service Worker registered:", registration);
-
-        registration.onupdatefound = () => {
-          const newWorker = registration.installing;
-          newWorker?.addEventListener("statechange", () => {
-            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-              console.log("🔄 New version available — refreshing...");
-              newWorker.postMessage("SKIP_WAITING");
-              window.location.reload();
-            }
-          });
-        };
       })
       .catch((error) => {
         console.error("❌ Service Worker registration failed:", error);
