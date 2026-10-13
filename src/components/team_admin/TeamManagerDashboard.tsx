@@ -252,7 +252,7 @@ export const TeamManagerDashboard: React.FC = () => {
 
   const email = profile?.email || user?.email || "";
 
-const cameraInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   const photoURL =
     profile?.photoURL ||
@@ -488,7 +488,7 @@ const cameraInputRef = useRef(null);
 
           alert(
             error?.message ||
-              "Unable to load players from the RefCentral backend."
+            "Unable to load players from the RefCentral backend."
           );
         }
       }
@@ -674,7 +674,7 @@ const cameraInputRef = useRef(null);
 
     const jerseyNumber =
       playerForm.jerseyNumber === "" ||
-      playerForm.jerseyNumber === null
+        playerForm.jerseyNumber === null
         ? null
         : Number(playerForm.jerseyNumber);
 
@@ -796,7 +796,7 @@ const cameraInputRef = useRef(null);
 
       alert(
         error?.message ||
-          "Unable to save player. Check the API URL and backend logs."
+        "Unable to save player. Check the API URL and backend logs."
       );
     } finally {
       setSaving(false);
@@ -1086,7 +1086,7 @@ const cameraInputRef = useRef(null);
             )}
 
             {/* PLAYERS */}
-            {activeTab === "players" && (
+            {/* {activeTab === "players" && (
               <div className="space-y-5">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
@@ -1197,6 +1197,171 @@ const cameraInputRef = useRef(null);
                         </div>
                       </Card>
                     ))}
+                  </div>
+                )}
+              </div>
+            )} */}
+
+
+            {activeTab === "players" && (
+              <div className="space-y-5">
+                {/* Header */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-2xl font-bold">Team Players</h2>
+                    <p className="text-sm text-gray-500">
+                      {selectedTeam?.name} • {activePlayers.length} active players
+                    </p>
+                  </div>
+
+                  <Button onClick={openNewPlayer} className="flex gap-2">
+                    <Plus className="w-4 h-4" />
+                    Register Player
+                  </Button>
+                </div>
+
+                {/* Empty state */}
+                {activePlayers.length === 0 ? (
+                  <Card className="p-10 text-center">
+                    <Users className="w-10 h-10 mx-auto mb-3 text-gray-400" />
+                    <h3 className="font-bold">No players registered</h3>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Start by registering the players for this team.
+                    </p>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {activePlayers.map((player) => {
+                      const fullName = [
+                        player.firstName,
+                        player.middleName,
+                        player.lastName,
+                      ]
+                        .filter(Boolean)
+                        .join(" ");
+
+                      const profilePhoto =
+                        photoUrls[player.id] ||
+                        player.photoUrl ||
+                        player.photoURL ||
+                        player.photo_url ||
+                        "";
+
+                      const fallbackPhoto =
+                        `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                          fullName || "Player"
+                        )}&background=2563eb&color=fff&size=256`;
+
+                      return (
+                        <Card key={player.id} className="overflow-hidden">
+                          {/* Player profile heading */}
+                          <div className="bg-gradient-to-r from-blue-900 to-blue-600 p-5 text-white">
+                            <div className="flex items-center gap-4">
+                              <img
+                                src={profilePhoto || fallbackPhoto}
+                                alt={`${fullName || "Player"} profile`}
+                                onError={(event) => {
+                                  event.currentTarget.onerror = null;
+                                  event.currentTarget.src = fallbackPhoto;
+                                }}
+                                className="h-24 w-24 shrink-0 rounded-full border-4 border-white/80 bg-white object-cover shadow-md"
+                              />
+
+                              <div className="min-w-0 flex-1">
+                                <h3 className="break-words text-lg font-bold">
+                                  {fullName || "Unnamed Player"}
+                                </h3>
+
+                                <p className="mt-1 text-sm text-blue-100">
+                                  {player.position || "Position not set"}
+                                </p>
+
+                                {player.jerseyNumber != null && (
+                                  <span className="mt-2 inline-block rounded-full bg-white/20 px-3 py-1 text-sm font-semibold">
+                                    Jersey #{player.jerseyNumber}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Player details */}
+                          <div className="p-5">
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
+                              <div>
+                                <p className="text-gray-500">First name</p>
+                                <p className="font-medium text-gray-900">
+                                  {player.firstName || "-"}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="text-gray-500">Last name</p>
+                                <p className="font-medium text-gray-900">
+                                  {player.lastName || "-"}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="text-gray-500">Date of birth</p>
+                                <p className="font-medium text-gray-900">
+                                  {player.dateOfBirth || "-"}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="text-gray-500">Registration</p>
+                                <p className="font-medium capitalize text-gray-900">
+                                  {player.registrationStatus || "Registered"}
+                                </p>
+                              </div>
+                            </div>
+
+                            {!profilePhoto && (
+                              <p className="mt-4 rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
+                                No saved profile photograph. Edit this player to add one.
+                              </p>
+                            )}
+
+                            {/* Actions */}
+                            <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openEditPlayer(player)}
+                                className="flex-1"
+                              >
+                                <Edit2 className="mr-1 h-4 w-4" />
+                                Edit
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  // Open a detailed player profile.
+                                  setSelectedPlayer(player);
+                                  setActiveTab("player-profile");
+                                }}
+                                className="flex-1"
+                              >
+                                <Users className="mr-1 h-4 w-4" />
+                                View Profile
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => removePlayer(player)}
+                                className="text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1380,159 +1545,205 @@ const cameraInputRef = useRef(null);
 
               {/* PLAYER PHOTOGRAPH */}
 
-<div className="mb-5 flex flex-col sm:flex-row items-start gap-4">
-  <div className="shrink-0">
-    <Avatar
-      src={
-        photoPreview ||
-        (selectedPlayer ? photoUrls[selectedPlayer.id] : "") ||
-        `https://ui-avatars.com/api/?name=${encodeURIComponent(
-          `${playerForm.firstName || "Player"} ${
-            playerForm.lastName || "Photo"
-          }`
-        )}&background=2563eb&color=fff`
-      }
-      size="lg"
-    />
-  </div>
+              <div className="mb-5 flex flex-col sm:flex-row items-start gap-4">
+                {/* Player Photograph: Preview, Save or Discard */}
+                <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
+                  <h3 className="mb-3 font-semibold text-gray-800">
+                    Player photograph
+                  </h3>
 
-  <div className="flex-1 w-full">
-    <label className="block text-sm font-semibold text-gray-700 mb-2">
-      Player photograph
-    </label>
+                  {/* Photo preview */}
+                  <div className="flex flex-col items-center">
+                    {photoPreview ? (
+                      <>
+                        <div className="relative w-full max-w-sm overflow-hidden rounded-xl border bg-gray-50">
+                          <img
+                            src={photoPreview}
+                            alt="Preview of player photograph"
+                            className="h-64 w-full object-contain"
+                          />
 
-    {/* Upload from the device */}
-    <input
-      id="player-photo"
-      type="file"
-      accept="image/jpeg,image/png,image/webp"
-      onChange={(event) => {
-        const file = event.target.files?.[0] || null;
+                          <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
+                            Photo preview
+                          </span>
+                        </div>
 
-        if (!file) return;
+                        {photoFile && (
+                          <div className="mt-3 w-full max-w-sm text-center">
+                            <p className="break-all text-sm font-medium text-gray-700">
+                              {photoFile.name}
+                            </p>
 
-        if (file.size > 5 * 1024 * 1024) {
-          alert("Player photo must not exceed 5 MB.");
-          event.target.value = "";
-          return;
-        }
+                            <p className="mt-1 text-xs text-gray-500">
+                              {(photoFile.size / (1024 * 1024)).toFixed(2)} MB
+                            </p>
+                          </div>
+                        )}
 
-        setPhotoFile(file);
+                        {/* Save or discard the selected photo */}
+                        <div className="mt-4 flex w-full max-w-sm flex-col gap-3 sm:flex-row">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!photoFile) {
+                                alert(
+                                  "This is the current player photo. Choose a new photo to replace it."
+                                );
+                                return;
+                              }
 
-        setPhotoPreview((previousPreview) => {
-          if (previousPreview?.startsWith("blob:")) {
-            URL.revokeObjectURL(previousPreview);
-          }
+                              // Keep the selected photo for submission with the player form.
+                              alert(
+                                "Photo accepted. Submit the player form to save it to RefCentral."
+                              );
+                            }}
+                            disabled={!photoFile}
+                            className="flex-1 rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            ✓ Use this photo
+                          </button>
 
-          return URL.createObjectURL(file);
-        });
-      }}
-      className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
-    />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPhotoFile(null);
 
-    {/* Hidden camera input */}
-    <input
-      ref={cameraInputRef}
-      type="file"
-      accept="image/*"
-      capture="user"
-      className="hidden"
-      onChange={(event) => {
-        const file = event.target.files?.[0] || null;
+                              setPhotoPreview((previousPreview) => {
+                                if (previousPreview?.startsWith("blob:")) {
+                                  URL.revokeObjectURL(previousPreview);
+                                }
 
-        if (!file) return;
+                                return "";
+                              });
 
-        if (!file.type.startsWith("image/")) {
-          alert("Please select a valid image.");
-          event.target.value = "";
-          return;
-        }
+                              const fileInput = document.getElementById("player-photo");
+                              if (fileInput) fileInput.value = "";
 
-        if (file.size > 5 * 1024 * 1024) {
-          alert("Player photo must not exceed 5 MB.");
-          event.target.value = "";
-          return;
-        }
+                              if (cameraInputRef.current) {
+                                cameraInputRef.current.value = "";
+                              }
+                            }}
+                            className="flex-1 rounded-lg border border-red-200 px-4 py-3 font-semibold text-red-600 hover:bg-red-50"
+                          >
+                            ✕ Discard photo
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex h-48 w-full max-w-sm flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-4 text-center">
+                        <span className="text-4xl">📷</span>
 
-        setPhotoFile(file);
+                        <p className="mt-2 font-medium text-gray-700">
+                          No new photo selected
+                        </p>
 
-        setPhotoPreview((previousPreview) => {
-          if (previousPreview?.startsWith("blob:")) {
-            URL.revokeObjectURL(previousPreview);
-          }
+                        <p className="mt-1 text-sm text-gray-500">
+                          Upload a photo or take one with your camera.
+                        </p>
+                      </div>
+                    )}
+                  </div>
 
-          return URL.createObjectURL(file);
-        });
+                  {/* Upload a photograph */}
+                  <div className="mt-5">
+                    <label
+                      htmlFor="player-photo"
+                      className="mb-2 block text-sm font-medium text-gray-700"
+                    >
+                      Choose a photo from your device
+                    </label>
 
-        // Allow taking the same photo again if needed.
-        event.target.value = "";
-      }}
-    />
+                    <input
+                      id="player-photo"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] || null;
+                        if (!file) return;
 
-    {/* Camera and photo actions */}
-    <div className="mt-3 flex flex-wrap gap-2">
-      <button
-        type="button"
-        onClick={() => cameraInputRef.current?.click()}
-        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-      >
-        <span aria-hidden="true">📷</span>
-        Open camera
-      </button>
+                        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+                          alert("Please choose a JPEG, PNG or WebP image.");
+                          event.target.value = "";
+                          return;
+                        }
 
-      <button
-        type="button"
-        disabled={!photoFile}
-        onClick={() => {
-          if (!photoFile) {
-            alert("Please take or select a photo first.");
-            return;
-          }
+                        if (file.size > 5 * 1024 * 1024) {
+                          alert("Player photo must not exceed 5 MB.");
+                          event.target.value = "";
+                          return;
+                        }
 
-          alert(
-            "Photo selected and ready to save. Submit the player form to upload it to RefCentral."
-          );
-        }}
-        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        Save photo
-      </button>
+                        setPhotoPreview((previousPreview) => {
+                          if (previousPreview?.startsWith("blob:")) {
+                            URL.revokeObjectURL(previousPreview);
+                          }
 
-      {photoFile && (
-        <button
-          type="button"
-          onClick={() => {
-            setPhotoFile(null);
+                          return URL.createObjectURL(file);
+                        });
 
-            setPhotoPreview((previousPreview) => {
-              if (previousPreview?.startsWith("blob:")) {
-                URL.revokeObjectURL(previousPreview);
-              }
+                        setPhotoFile(file);
+                      }}
+                      className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
+                    />
 
-              return "";
-            });
+                    <p className="mt-1 text-xs text-gray-500">
+                      JPEG, PNG or WebP. Maximum 5 MB.
+                    </p>
+                  </div>
 
-            const uploadInput = document.getElementById("player-photo");
-            if (uploadInput) uploadInput.value = "";
-          }}
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-        >
-          Remove photo
-        </button>
-      )}
-    </div>
+                  {/* Camera capture */}
+                  <div className="mt-3">
+                    <input
+                      ref={cameraInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="user"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] || null;
+                        if (!file) return;
 
-    <p className="mt-2 text-xs text-gray-500">
-      Take a photograph using your device camera or upload an existing image.
-      Supported formats: JPEG, PNG and WebP. Maximum size: 5 MB.
-    </p>
+                        if (!file.type.startsWith("image/")) {
+                          alert("Please capture a valid image.");
+                          event.target.value = "";
+                          return;
+                        }
 
-    <p className="mt-1 text-xs text-blue-700">
-      The selected photo is prepared for saving. Submit the player form to
-      upload it through the RefCentral backend.
-    </p>
-  </div>
-</div>
+                        if (file.size > 5 * 1024 * 1024) {
+                          alert("Player photo must not exceed 5 MB.");
+                          event.target.value = "";
+                          return;
+                        }
+
+                        setPhotoPreview((previousPreview) => {
+                          if (previousPreview?.startsWith("blob:")) {
+                            URL.revokeObjectURL(previousPreview);
+                          }
+
+                          return URL.createObjectURL(file);
+                        });
+
+                        setPhotoFile(file);
+                        event.target.value = "";
+                      }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700"
+                    >
+                      📷 Take a photo with camera
+                    </button>
+                  </div>
+
+                  <p className="mt-3 text-xs text-gray-500">
+                    Review the preview before accepting the photograph. Discarding a new
+                    photo removes it from the pending changes; it does not delete an
+                    existing photograph already saved to the player's record.
+                  </p>
+                </div>
+              </div>
 
               {/* PLAYER DETAILS */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

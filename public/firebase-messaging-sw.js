@@ -10,14 +10,15 @@ importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-com
    (Values injected from Vite .env during build)
 ------------------------------------------------ */
 
+const p = new URL(self.location.href).searchParams;
+
 firebase.initializeApp({
-    apiKey: self.__ENV?.VITE_FIREBASE_API_KEY || "",
-    authDomain: self.__ENV?.VITE_FIREBASE_AUTH_DOMAIN || "",
-    projectId: self.__ENV?.VITE_FIREBASE_PROJECT_ID || "",
-    storageBucket: self.__ENV?.VITE_FIREBASE_STORAGE_BUCKET || "",
-    messagingSenderId: self.__ENV?.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-    appId: self.__ENV?.VITE_FIREBASE_APP_ID || "",
-    measurementId: self.__ENV?.VITE_FIREBASE_MEASUREMENT_ID || ""
+    apiKey: p.get("apiKey"),
+    authDomain: p.get("authDomain"),
+    projectId: p.get("projectId"),
+    storageBucket: p.get("storageBucket"),
+    messagingSenderId: p.get("messagingSenderId"),
+    appId: p.get("appId"),
 });
 
 
